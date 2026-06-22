@@ -1,0 +1,1784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ProtonRed Pentest Tool</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #080b0f; --bg2: #0d1117; --bg3: #161b22; --bg4: #1c2128;
+  --border: #21262d; --green: #00ff88; --cyan: #00d4ff; --red: #ff4757;
+  --orange: #ff6b35; --yellow: #ffd93d; --blue: #58a6ff; --purple: #bc8cff;
+  --text: #c9d1d9; --dim: #6e7681;
+  --crit: #ff0000; --high: #ff4444; --med: #ff8800; --low: #ffcc00; --info: #00aaff;
+}
+body { font-family: 'Cascadia Code','Fira Code','Courier New',monospace; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; overflow: hidden; font-size: 13px; }
+
+/* Header */
+header { background: var(--bg2); border-bottom: 1px solid var(--border); padding: 8px 20px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.logo { display: flex; align-items: center; gap: 10px; }
+.logo-icon { width: 26px; height: 26px; background: var(--green); border-radius: 5px; display: flex; align-items: center; justify-content: center; font-size: 13px; color: #000; font-weight: bold; }
+.logo-text { font-size: 15px; font-weight: bold; color: var(--green); letter-spacing: 2px; }
+.logo-sub { font-size: 9px; color: var(--dim); letter-spacing: 1px; text-transform: uppercase; }
+.hdr-right { display: flex; align-items: center; gap: 12px; font-size: 11px; }
+.settings-btn { background: transparent; border: 1px solid var(--border); color: var(--dim); border-radius: 4px; padding: 4px 10px; cursor: pointer; font-size: 13px; transition: all .2s; }
+.settings-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+
+/* Settings drawer */
+.drawer-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 100; }
+.drawer-overlay.open { display: block; }
+.drawer { position: fixed; top: 0; right: -420px; width: 420px; height: 100vh; background: var(--bg2); border-left: 1px solid var(--border); z-index: 101; transition: right .25s ease; display: flex; flex-direction: column; overflow: hidden; }
+.drawer.open { right: 0; }
+.drawer-header { padding: 14px 18px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.drawer-title { font-size: 13px; font-weight: bold; color: var(--green); letter-spacing: 1px; text-transform: uppercase; }
+.drawer-close { background: transparent; border: none; color: var(--dim); font-size: 18px; cursor: pointer; padding: 0 4px; }
+.drawer-close:hover { color: var(--text); }
+.drawer-body { flex: 1; overflow-y: auto; padding: 18px; }
+.drawer-section { margin-bottom: 20px; }
+.drawer-section-title { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin-bottom: 10px; border-bottom: 1px solid var(--border); padding-bottom: 5px; }
+.drawer-footer { padding: 14px 18px; border-top: 1px solid var(--border); display: flex; gap: 8px; flex-shrink: 0; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dim); display: inline-block; margin-right: 5px; }
+.dot.on { background: var(--green); box-shadow: 0 0 5px var(--green); }
+.dot.run { background: var(--orange); animation: pulse 1s infinite; }
+@keyframes pulse { 0%,100%{opacity:1}50%{opacity:.4} }
+
+/* Step tabs */
+.steps { background: var(--bg2); border-bottom: 1px solid var(--border); display: flex; flex-shrink: 0; }
+.step-tab { padding: 10px 20px; font-size: 11px; cursor: pointer; color: var(--dim); border-bottom: 2px solid transparent; transition: all .2s; display: flex; align-items: center; gap: 7px; text-transform: uppercase; letter-spacing: 1px; white-space: nowrap; }
+.step-tab:hover { color: var(--text); }
+.step-tab.active { color: var(--green); border-bottom-color: var(--green); }
+.step-tab.done { color: var(--cyan); }
+.step-num { width: 18px; height: 18px; border-radius: 50%; background: var(--bg3); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 10px; flex-shrink: 0; }
+.step-tab.active .step-num { background: var(--green); color: #000; border-color: var(--green); }
+.step-tab.done .step-num { background: var(--cyan); color: #000; border-color: var(--cyan); }
+
+/* Main area */
+.main { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+.step-panel { display: none; flex: 1; overflow: hidden; flex-direction: column; }
+.step-panel.active { display: flex; flex-direction: column; }
+
+/* Scrollable content */
+.scroll { overflow-y: auto; flex: 1; padding: 16px; }
+.scroll::-webkit-scrollbar { width: 4px; }
+.scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* Cards */
+.card { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 14px; margin-bottom: 12px; }
+.card-title { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin-bottom: 10px; }
+
+/* Form */
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+.form-group { margin-bottom: 12px; }
+label { display: block; font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+input, select, textarea { width: 100%; background: var(--bg3); border: 1px solid var(--border); color: var(--text); padding: 7px 10px; border-radius: 4px; font-family: inherit; font-size: 12px; outline: none; transition: border-color .2s; }
+input:focus, select:focus, textarea:focus { border-color: var(--cyan); }
+select option { background: var(--bg3); }
+textarea { resize: vertical; min-height: 60px; }
+.hint { font-size: 10px; color: var(--dim); margin-top: 3px; }
+.api-row { display: flex; gap: 6px; }
+.api-row input { flex: 1; }
+.eye-btn { background: var(--bg3); border: 1px solid var(--border); color: var(--dim); border-radius: 4px; padding: 0 8px; cursor: pointer; font-size: 13px; }
+
+/* Buttons */
+.btn { border: none; border-radius: 4px; padding: 7px 14px; font-family: inherit; font-size: 12px; cursor: pointer; transition: all .2s; font-weight: bold; }
+.btn-primary { background: var(--green); color: #000; }
+.btn-primary:hover { background: #00cc66; }
+.btn-primary:disabled { background: #333; color: #666; cursor: not-allowed; }
+.btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--dim); }
+.btn-ghost:hover { border-color: var(--cyan); color: var(--cyan); }
+.btn-danger { background: transparent; border: 1px solid var(--red); color: var(--red); }
+.btn-danger:hover { background: var(--red); color: #000; }
+.btn-sm { padding: 4px 10px; font-size: 11px; }
+.btn-full { width: 100%; padding: 9px; }
+
+/* Scope profiles */
+.scope-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.scope-card { background: var(--bg3); border: 2px solid var(--border); border-radius: 6px; padding: 12px; cursor: pointer; transition: all .2s; }
+.scope-card:hover { border-color: var(--cyan); }
+.scope-card.selected { border-color: var(--green); background: rgba(0,255,136,.05); }
+.scope-icon { font-size: 20px; margin-bottom: 6px; }
+.scope-name { font-size: 12px; font-weight: bold; color: var(--text); margin-bottom: 3px; }
+.scope-desc { font-size: 10px; color: var(--dim); }
+/* Targets */
+.mini-btn { background: var(--green); color: #000; border: none; padding: 4px 10px; border-radius: 4px; font-family: inherit; font-size: 11px; font-weight: bold; cursor: pointer; }
+.mini-btn:hover { opacity: .85; }
+.tgt-card { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-bottom: 8px; }
+.tgt-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.tgt-head .tgt-num { color: var(--cyan); font-size: 11px; font-weight: bold; }
+.tgt-head input.tgt-name { flex: 1; }
+.tgt-rm { background: transparent; border: 1px solid var(--red); color: var(--red); border-radius: 4px; cursor: pointer; font-size: 11px; padding: 2px 8px; }
+.tgt-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.tgt-grid label { font-size: 9px; color: var(--dim); text-transform: uppercase; letter-spacing: .5px; }
+.tgt-grid input, .tgt-grid select { width: 100%; }
+.tgt-remote { border-top: 1px dashed var(--border); margin-top: 8px; padding-top: 8px; }
+.tgt-remote-title { font-size: 10px; color: var(--orange); margin-bottom: 6px; font-weight: bold; }
+.tgt-chk { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text); }
+.tgt-chk input { width: auto; }
+
+/* TTP Panel */
+.ttp-layout { display: grid; grid-template-columns: 220px 1fr; height: 100%; overflow: hidden; }
+.tactic-list { background: var(--bg2); border-right: 1px solid var(--border); overflow-y: auto; flex-shrink: 0; }
+.tactic-item { padding: 10px 14px; cursor: pointer; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border); transition: background .15s; }
+.tactic-item:hover { background: var(--bg3); }
+.tactic-item.active { background: var(--bg3); border-left: 3px solid var(--green); }
+.tactic-name { font-size: 12px; display: flex; align-items: center; gap: 7px; }
+.tactic-badge { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px; font-size: 10px; color: var(--dim); }
+.tactic-badge.has-selected { background: var(--green); color: #000; border-color: var(--green); }
+.technique-panel { overflow-y: auto; padding: 14px; }
+.technique-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.technique-title { font-size: 14px; font-weight: bold; color: var(--green); }
+.quick-actions { display: flex; gap: 6px; }
+.technique-row { background: var(--bg2); border: 1px solid var(--border); border-radius: 5px; margin-bottom: 8px; overflow: hidden; }
+.technique-row.selected { border-color: rgba(0,255,136,.4); }
+.technique-header-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; }
+.tech-check { width: 16px; height: 16px; border: 1.5px solid var(--border); border-radius: 3px; background: var(--bg3); display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 10px; cursor: pointer; }
+.tech-check.checked { background: var(--green); border-color: var(--green); color: #000; }
+.tech-id { color: var(--cyan); font-size: 11px; min-width: 70px; flex-shrink: 0; }
+.tech-name { flex: 1; font-size: 12px; }
+.tech-count { color: var(--dim); font-size: 10px; flex-shrink: 0; }
+.tech-expand { color: var(--dim); font-size: 10px; margin-left: 6px; }
+.test-list { border-top: 1px solid var(--border); }
+.test-item { display: flex; align-items: flex-start; gap: 10px; padding: 8px 12px 8px 38px; border-bottom: 1px solid rgba(33,38,45,.5); }
+.test-item:last-child { border-bottom: none; }
+.test-check { width: 14px; height: 14px; border: 1.5px solid var(--border); border-radius: 2px; background: var(--bg3); display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 9px; cursor: pointer; margin-top: 1px; }
+.test-check.checked { background: var(--cyan); border-color: var(--cyan); color: #000; }
+.test-info { flex: 1; }
+.test-name-text { font-size: 11px; color: var(--text); }
+.test-meta { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 3px; }
+.tag { font-size: 9px; padding: 1px 5px; border-radius: 3px; background: var(--bg); border: 1px solid var(--border); color: var(--dim); }
+.tag.elev { border-color: var(--orange); color: var(--orange); }
+.tag.win { border-color: #3399ff; color: #3399ff; }
+.tag.lin { border-color: var(--green); color: var(--green); }
+
+/* Selection bar */
+.selection-bar { background: var(--bg2); border-top: 1px solid var(--border); padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.sel-info { display: flex; align-items: center; gap: 16px; font-size: 11px; }
+.sel-count { color: var(--green); font-weight: bold; font-size: 14px; }
+
+/* Manual add */
+.manual-add { display: flex; gap: 8px; align-items: center; }
+.manual-add input { width: 130px; }
+
+/* Execution panel */
+.exec-layout { display: grid; grid-template-columns: 1fr 260px; height: 100%; overflow: hidden; }
+.exec-log-wrapper { flex: 1; display: flex; flex-direction: column; background: #030508; border: 1px solid rgba(0, 255, 136, 0.15); box-shadow: inset 0 0 20px rgba(0, 255, 136, 0.05); overflow: hidden; position: relative; font-family: 'Cascadia Code', 'Fira Code', 'Courier New', monospace; }
+.exec-log { flex: 1; overflow-y: auto; padding: 14px; font-size: 12px; color: #33ff33; text-shadow: 0 0 2px rgba(51, 255, 51, 0.25); background: #030508; }
+.exec-log::-webkit-scrollbar { width: 6px; }
+.exec-log::-webkit-scrollbar-track { background: #030508; }
+.exec-log::-webkit-scrollbar-thumb { background: rgba(0, 255, 136, 0.2); border-radius: 3px; }
+.exec-log::-webkit-scrollbar-thumb:hover { background: rgba(0, 255, 136, 0.4); }
+.terminal-input-line { display: flex; align-items: center; background: #05080c; border-top: 1px solid rgba(0, 255, 136, 0.15); padding: 8px 14px; gap: 8px; flex-shrink: 0; }
+.terminal-prompt { color: #00d4ff; font-weight: bold; white-space: nowrap; text-shadow: 0 0 2px rgba(0, 212, 255, 0.3); font-family: inherit; font-size: 12px; }
+#terminal-input { flex: 1; background: transparent; border: none; color: #33ff33; font-family: inherit; font-size: 12px; outline: none; padding: 0; text-shadow: 0 0 2px rgba(51, 255, 51, 0.3); }
+#terminal-input::placeholder { color: rgba(0, 255, 136, 0.25); }
+.terminal-user-command { display: flex; gap: 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid rgba(0, 255, 136, 0.1); }
+.exec-sidebar { border-left: 1px solid var(--border); overflow-y: auto; padding: 14px; }
+.log-line { display: flex; gap: 8px; align-items: flex-start; padding: 5px 0; border-bottom: 1px solid rgba(33,38,45,.4); }
+.log-ts { color: var(--dim); font-size: 10px; flex-shrink: 0; padding-top: 1px; }
+.log-badge { font-size: 9px; padding: 1px 6px; border-radius: 3px; flex-shrink: 0; font-weight: bold; text-transform: uppercase; min-width: 56px; text-align: center; }
+.b-start { background: rgba(0,212,255,.2); color: var(--cyan); }
+.b-done-ok { background: rgba(0,255,136,.2); color: var(--green); }
+.b-done-fail { background: rgba(255,71,87,.2); color: var(--red); }
+.b-skip { background: rgba(110,118,129,.15); color: var(--dim); }
+.b-info { background: rgba(88,166,255,.15); color: var(--blue); }
+.b-complete { background: rgba(0,255,136,.3); color: var(--green); }
+.log-msg { flex: 1; word-break: break-word; line-height: 1.4; }
+.stdout-pre { background: var(--bg3); padding: 6px; border-radius: 3px; font-size: 10px; color: var(--green); white-space: pre-wrap; max-height: 150px; overflow-y: auto; margin-top: 4px; }
+.prog-wrap { margin-bottom: 12px; }
+.prog-label { font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; display: flex; justify-content: space-between; }
+.prog-bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+.prog-fill { height: 100%; background: var(--green); width: 0%; transition: width .3s; border-radius: 3px; }
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+.stat-box { background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; padding: 8px; text-align: center; }
+.stat-n { font-size: 20px; font-weight: bold; }
+.stat-l { font-size: 9px; color: var(--dim); text-transform: uppercase; }
+.n-green { color: var(--green); }
+.n-red { color: var(--red); }
+.n-yellow { color: var(--yellow); }
+.n-dim { color: var(--dim); }
+
+/* Analysis panel */
+.analysis-layout { display: grid; grid-template-columns: 1fr 300px; height: 100%; overflow: hidden; }
+.analysis-main { overflow-y: auto; padding: 16px; }
+.analysis-side { border-left: 1px solid var(--border); overflow-y: auto; padding: 14px; }
+.ai-stream { background: var(--bg3); border: 1px solid var(--border); border-radius: 5px; padding: 12px; font-size: 11px; color: var(--green); white-space: pre-wrap; min-height: 120px; max-height: 300px; overflow-y: auto; margin-bottom: 14px; font-family: inherit; }
+.finding-card { background: var(--bg2); border: 1px solid var(--border); border-radius: 5px; padding: 12px; margin-bottom: 10px; }
+.finding-head { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; flex-wrap: wrap; }
+.sev { padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: bold; color: #000; }
+.sev-critical { background: var(--crit); }
+.sev-high { background: var(--high); }
+.sev-medium { background: var(--med); }
+.sev-low { background: var(--low); }
+.sev-info { background: var(--info); }
+.finding-tid { color: var(--cyan); font-size: 11px; }
+.finding-tactic { color: var(--dim); font-size: 10px; }
+.finding-title { font-weight: bold; font-size: 12px; }
+.finding-detail { color: var(--dim); font-size: 12px; margin-top: 5px; line-height: 1.5; }
+.evidence-pre { background: #0a0a0a; padding: 6px; border-radius: 3px; font-size: 10px; color: var(--green); white-space: pre-wrap; margin: 6px 0; max-height: 100px; overflow-y: auto; }
+.rec { font-size: 11px; color: var(--blue); margin-top: 5px; }
+.risk-banner { border-radius: 6px; padding: 14px; margin-bottom: 14px; font-size: 13px; }
+.risk-critical,.risk-high { background: rgba(255,68,68,.1); border: 1px solid var(--high); }
+.risk-medium { background: rgba(255,136,0,.1); border: 1px solid var(--med); }
+.risk-low { background: rgba(255,204,0,.1); border: 1px solid var(--low); }
+.risk-info { background: rgba(0,170,255,.1); border: 1px solid var(--info); }
+.sev-counts { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+.sev-count { padding: 2px 10px; border-radius: 10px; font-size: 10px; font-weight: bold; color: #000; }
+.attack-path { background: var(--bg3); border: 1px solid var(--border); border-radius: 4px; padding: 10px; font-size: 12px; color: var(--dim); font-style: italic; line-height: 1.6; margin-bottom: 12px; }
+.obs-list { list-style: none; }
+.obs-list li { padding: 4px 0; font-size: 12px; color: var(--dim); border-bottom: 1px solid rgba(33,38,45,.5); }
+.obs-list li::before { content: "→ "; color: var(--cyan); }
+.section-title { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--dim); margin: 14px 0 8px; }
+.empty { text-align: center; color: var(--dim); padding: 32px; font-size: 12px; }
+.divider { height: 1px; background: var(--border); margin: 12px 0; }
+
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">⚡</div>
+    <div>
+      <div class="logo-text">PROTONRED</div>
+      <div class="logo-sub">Autonomous Security Testing</div>
+    </div>
+  </div>
+  <div class="hdr-right">
+    <span><span class="dot" id="sdot"></span><span id="stxt">Connecting...</span></span>
+    <span id="hdr-tech" style="color:var(--dim)">0 techniques</span>
+    <button class="settings-btn" onclick="openSettings()">⚙ Settings</button>
+  </div>
+</header>
+
+<!-- Settings Drawer -->
+<div class="drawer-overlay" id="drawer-overlay" onclick="closeSettings()"></div>
+<div class="drawer" id="settings-drawer">
+  <div class="drawer-header">
+    <span class="drawer-title">⚙ Settings</span>
+    <button class="drawer-close" onclick="closeSettings()">✕</button>
+  </div>
+  <div class="drawer-body">
+
+    <div class="drawer-section">
+      <div class="drawer-section-title">AI Provider — Analysis Model</div>
+      <div class="form-group">
+        <label>Model</label>
+        <select id="cfg-model" onchange="onCfgModelChange()">
+          <optgroup label="Anthropic">
+            <option value="claude-sonnet-4-6">Claude Sonnet 4.6 (Recommended)</option>
+            <option value="claude-opus-4-8">Claude Opus 4.8</option>
+            <option value="claude-haiku-4-5">Claude Haiku 4.5 (Fast)</option>
+          </optgroup>
+          <optgroup label="OpenAI">
+            <option value="gpt-4o">GPT-4o</option>
+            <option value="gpt-4o-mini">GPT-4o Mini</option>
+            <option value="o1">o1 (Reasoning)</option>
+          </optgroup>
+          <optgroup label="Google">
+            <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+            <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+          </optgroup>
+          <optgroup label="Mistral">
+            <option value="mistral-large">Mistral Large</option>
+            <option value="mistral-medium">Mistral Medium</option>
+          </optgroup>
+          <optgroup label="Cohere">
+            <option value="command-r-plus">Command R+</option>
+          </optgroup>
+          <optgroup label="Groq (Fast)">
+            <option value="groq-llama-70b">Groq — Llama 3.3 70B</option>
+            <option value="groq-mixtral">Groq · Mixtral 8x7B</option>
+          </optgroup>
+          <optgroup label="Together AI">
+            <option value="together-llama-70b">Together · Llama 3.1 70B</option>
+          </optgroup>
+          <optgroup label="Perplexity">
+            <option value="perplexity-sonar">Perplexity Sonar</option>
+          </optgroup>
+          <optgroup label="Azure OpenAI">
+            <option value="azure-gpt-4o">Azure GPT-4o</option>
+          </optgroup>
+          <optgroup label="OpenRouter (300+ models)">
+            <option value="openrouter-claude-sonnet">OR · Claude Sonnet</option>
+            <option value="openrouter-gpt-4o">OR · GPT-4o</option>
+            <option value="openrouter-gemini-pro">OR · Gemini 1.5 Pro</option>
+            <option value="openrouter-llama-70b">OR · Llama 3.1 70B</option>
+            <option value="openrouter-deepseek-r1">OR · DeepSeek R1</option>
+            <option value="openrouter-qwen-72b">OR · Qwen 2.5 72B</option>
+            <option value="openrouter-custom">OR · Custom model</option>
+          </optgroup>
+          <optgroup label="Local (Ollama)">
+            <option value="ollama-llama3">Ollama · Llama3.1</option>
+            <option value="ollama-mistral">Ollama · Mistral</option>
+            <option value="ollama-deepseek">Ollama · DeepSeek-R1</option>
+          </optgroup>
+          <optgroup label="Custom">
+            <option value="custom">Custom OpenAI-compatible</option>
+          </optgroup>
+        </select>
+      </div>
+
+      <div id="cfg-apikey-wrap" class="form-group">
+        <label>API Key</label>
+        <div class="api-row">
+          <input type="password" id="cfg-apikey" placeholder="sk-...">
+          <button class="eye-btn" onclick="toggleKey('cfg-apikey')">👁</button>
+        </div>
+      </div>
+
+      <div id="cfg-baseurl-wrap" class="form-group" style="display:none">
+        <label>Base URL</label>
+        <input type="text" id="cfg-baseurl" placeholder="http://localhost:11434">
+        <div class="hint">Ollama / custom OpenAI-compatible endpoint</div>
+      </div>
+
+      <div id="cfg-azure-wrap" class="form-group" style="display:none">
+        <label>Azure API Base</label>
+        <input type="text" id="cfg-azure-base" placeholder="https://your.openai.azure.com">
+      </div>
+
+      <div id="cfg-or-wrap" class="form-group" style="display:none">
+        <label>OpenRouter Model Path</label>
+        <input type="text" id="cfg-or-model" placeholder="openrouter/deepseek/deepseek-r1">
+        <div class="hint">Full path from openrouter.ai/models</div>
+      </div>
+    </div>
+
+    <div class="drawer-section">
+      <div class="drawer-section-title">Quick API Keys (optional — saves per provider)</div>
+      <div class="form-group">
+        <label>Anthropic</label>
+        <div class="api-row"><input type="password" id="key-anthropic" placeholder="sk-ant-..."><button class="eye-btn" onclick="toggleKey('key-anthropic')">👁</button></div>
+      </div>
+      <div class="form-group">
+        <label>OpenAI</label>
+        <div class="api-row"><input type="password" id="key-openai" placeholder="sk-..."><button class="eye-btn" onclick="toggleKey('key-openai')">👁</button></div>
+      </div>
+      <div class="form-group">
+        <label>OpenRouter</label>
+        <div class="api-row"><input type="password" id="key-openrouter" placeholder="sk-or-v1-..."><button class="eye-btn" onclick="toggleKey('key-openrouter')">👁</button></div>
+      </div>
+      <div class="form-group">
+        <label>Google / Gemini</label>
+        <div class="api-row"><input type="password" id="key-gemini" placeholder="AIza..."><button class="eye-btn" onclick="toggleKey('key-gemini')">👁</button></div>
+      </div>
+      <div class="form-group">
+        <label>Groq</label>
+        <div class="api-row"><input type="password" id="key-groq" placeholder="gsk_..."><button class="eye-btn" onclick="toggleKey('key-groq')">👁</button></div>
+      </div>
+      <div class="form-group">
+        <label>Mistral</label>
+        <div class="api-row"><input type="password" id="key-mistral" placeholder="..."><button class="eye-btn" onclick="toggleKey('key-mistral')">👁</button></div>
+      </div>
+    </div>
+
+    <div class="drawer-section">
+      <div class="drawer-section-title">General</div>
+      <div class="form-group">
+        <label>Atomics Path</label>
+        <input type="text" id="cfg-atomics-path" placeholder="./atomics (server default)">
+        <div class="hint">Override server atomics directory</div>
+      </div>
+    </div>
+
+  </div>
+  <div class="drawer-footer">
+    <button class="btn btn-primary" style="flex:1" onclick="saveSettings()">💾 Save Settings</button>
+    <button class="btn btn-ghost" onclick="closeSettings()">Cancel</button>
+  </div>
+</div>
+
+<!-- Step tabs -->
+<div class="steps">
+  <div class="step-tab active" id="tab-1" onclick="goStep(1)"><span class="step-num">1</span>Scope</div>
+  <div class="step-tab" id="tab-2" onclick="goStep(2)"><span class="step-num">2</span>TTP Selection</div>
+  <div class="step-tab" id="tab-3" onclick="goStep(3)"><span class="step-num">3</span>Execute</div>
+  <div class="step-tab" id="tab-4" onclick="goStep(4)"><span class="step-num">4</span>AI Analysis</div>
+  <div class="step-tab" id="tab-5" onclick="goStep(5)"><span class="step-num">5</span>Port Scan</div>
+  <div class="step-tab" id="tab-6" onclick="goStep(6)"><span class="step-num">6</span>Scan Viewer</div>
+</div>
+
+<div class="main">
+
+<!-- ═══ STEP 1: SCOPE ═══════════════════════════════════════════════════════ -->
+<div class="step-panel active" id="panel-1">
+  <div class="scroll">
+
+    <div class="card">
+      <div class="card-title" style="display:flex;justify-content:space-between;align-items:center">
+        <span>Targets — where the TTPs run</span>
+        <button class="mini-btn" onclick="addTarget()">+ Add Target</button>
+      </div>
+      <div id="targets-list"></div>
+      <div style="font-size:10px;color:var(--dim);margin-top:8px;line-height:1.5">
+        <b>Local</b> = run on this machine (tool deployed on target). <b>Remote</b> = connect via WinRM and run as-if-local on that host; output returns here for analysis.
+        Each target's <b>privilege</b> (admin/standard) and <b>domain-join</b> decide which TTPs are skipped. AD-only techniques are skipped on non-domain targets.
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end">
+      <button class="btn btn-primary" onclick="goStep(2)">Next: Select TTPs →</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ STEP 2: TTP SELECTION ════════════════════════════════════════════════ -->
+<div class="step-panel" id="panel-2">
+  <div class="ttp-layout">
+
+    <!-- Left: tactic list -->
+    <div class="tactic-list" id="tactic-list">
+      <!-- populated by JS -->
+    </div>
+
+    <!-- Right: technique checkboxes -->
+    <div style="display:flex;flex-direction:column;overflow:hidden">
+      <div class="technique-panel" id="technique-panel">
+        <div class="empty">Select a tactic from the left panel</div>
+      </div>
+
+      <!-- Bottom bar -->
+      <div class="selection-bar">
+        <div class="sel-info">
+          <span><span class="sel-count" id="sel-count">0</span> tests selected</span>
+          <div class="manual-add">
+            <input type="text" id="manual-tid" placeholder="T1003" style="width:90px">
+            <input type="number" id="manual-idx" placeholder="idx" style="width:55px" value="0" min="0">
+            <button class="btn btn-ghost btn-sm" onclick="addManual()">+ Add</button>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-ghost btn-sm" onclick="clearAllSelections()">Clear All</button>
+          <button class="btn btn-primary" onclick="goStep(3)">Execute →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ STEP 3: EXECUTE ══════════════════════════════════════════════════════ -->
+<div class="step-panel" id="panel-3">
+  <div class="exec-layout">
+
+    <!-- Log -->
+    <div style="display:flex;flex-direction:column;overflow:hidden;flex:1">
+      <div style="background:var(--bg2);border-bottom:1px solid var(--border);padding:8px 14px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+        <span style="font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:1px">Interactive Terminal Log Stream</span>
+        <div style="display:flex;gap:8px">
+          <span id="exec-prog-txt" style="font-size:11px;color:var(--dim)">0 / 0</span>
+          <button class="btn btn-ghost btn-sm" onclick="clearExecLog()">Clear</button>
+        </div>
+      </div>
+      <div style="height:3px;background:var(--border);flex-shrink:0"><div id="exec-prog" style="height:100%;background:var(--green);width:0%;transition:width .3s"></div></div>
+      <div class="exec-log-wrapper">
+        <div class="exec-log" id="exec-log">
+          <div class="empty" id="exec-empty">Configure targets and TTPs, then click Run to start execution</div>
+        </div>
+        <div class="terminal-input-line">
+          <span class="terminal-prompt">protonred@localhost:~$</span>
+          <input type="text" id="terminal-input" placeholder="Type a command and press Enter (e.g. whoami, dir, ipconfig)..." autocomplete="off" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="exec-sidebar">
+      <div class="card-title">Progress</div>
+      <div class="stat-grid">
+        <div class="stat-box"><div class="stat-n n-green" id="s-succ">0</div><div class="stat-l">Succeeded</div></div>
+        <div class="stat-box"><div class="stat-n n-red" id="s-fail">0</div><div class="stat-l">Failed</div></div>
+        <div class="stat-box"><div class="stat-n n-yellow" id="s-skip">0</div><div class="stat-l">Skipped</div></div>
+        <div class="stat-box"><div class="stat-n n-dim" id="s-total">0</div><div class="stat-l">Total</div></div>
+      </div>
+      <div class="divider"></div>
+      <div class="card-title">Run</div>
+      <button class="btn btn-primary btn-full" id="run-btn" onclick="runExecution()">▶ Run Tests</button>
+      <button class="btn btn-full btn-sm" id="reset-btn" onclick="resetExecution()" style="display:none;margin-top:6px;background:rgba(255,71,87,.15);border:1px solid var(--red);color:var(--red)">⟳ Reset / Cancel</button>
+      <div style="margin-top:8px">
+        <button class="btn btn-ghost btn-full btn-sm" onclick="goStep(2)">← Back to TTPs</button>
+      </div>
+      <div class="divider"></div>
+      <div class="card-title">Current Test</div>
+      <div id="current-test" style="font-size:11px;color:var(--dim)">—</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ STEP 4: AI ANALYSIS ══════════════════════════════════════════════════ -->
+<div class="step-panel" id="panel-4">
+  <div class="analysis-layout">
+
+    <!-- Main: findings -->
+    <div class="analysis-main" id="analysis-main">
+      <div class="empty" id="analysis-empty">Run execution first, then configure AI provider and click Analyze</div>
+    </div>
+
+    <!-- Sidebar: controls -->
+    <div class="analysis-side">
+      <div class="card-title">AI Provider</div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:10px;margin-bottom:12px">
+        <div style="font-size:11px;color:var(--dim)">Configured in</div>
+        <div style="font-size:12px;color:var(--green);margin-top:2px" id="cfg-model-display">—</div>
+        <button class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%" onclick="openSettings()">⚙ Change in Settings</button>
+      </div>
+
+      <button class="btn btn-primary btn-full" id="analyze-btn" onclick="runAnalysis()" disabled>🔍 Analyze with AI</button>
+      <div id="analyze-status" style="font-size:11px;color:var(--dim);margin-top:8px;text-align:center"></div>
+
+      <div class="divider"></div>
+
+      <div class="card-title">Export</div>
+      <a class="btn btn-ghost btn-full btn-sm" id="raw-json-btn" style="display:none;margin-bottom:6px;text-align:center;text-decoration:none" target="_blank">⬇ Download Raw JSON</a>
+      <button class="btn btn-ghost btn-full btn-sm" id="report-btn" style="display:none;margin-bottom:6px" onclick="openReport()">📄 Open Full Report</button>
+      <button class="btn btn-ghost btn-full btn-sm" id="pdf-btn" style="display:none" onclick="openPDF()">🖨 Save as PDF</button>
+
+      <div class="divider"></div>
+
+      <div class="card-title">Severity Summary</div>
+      <div id="sev-summary" style="display:flex;flex-direction:column;gap:5px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- === STEP 5: PORT SCAN + VULN ANALYSIS === -->
+<div class="step-panel" id="panel-5">
+  <div class="analysis-layout">
+
+    <!-- Main: scan + vuln results -->
+    <div class="analysis-main" id="scan-main">
+      <div class="empty" id="scan-empty">Enter a target, choose a port profile, and click Run Scan. Then analyze the results with AI to surface candidate CVEs.</div>
+    </div>
+
+    <!-- Sidebar: controls -->
+    <div class="analysis-side">
+      <div class="card-title">Nmap Port Scan</div>
+      <div style="font-size:11px;color:var(--dim);margin-bottom:3px">Target (host / IP / CIDR)</div>
+      <input type="text" id="scan-target" placeholder="10.0.0.5" style="width:100%;margin-bottom:8px" onchange="saveSession()">
+      <div style="font-size:11px;color:var(--dim);margin-bottom:3px">Port profile</div>
+      <select id="scan-profile" style="width:100%;margin-bottom:10px" onchange="saveSession()">
+        <option value="ad-top-1000">AD + Top 1000 (default)</option>
+        <option value="top-1000">Top 1000 ports</option>
+        <option value="active-directory">Active Directory ports</option>
+        <option value="full">All 65535 ports (slow)</option>
+      </select>
+      <button class="btn btn-primary btn-full" id="scan-btn" onclick="runScan()">Run Scan</button>
+      <div id="scan-status" style="font-size:11px;color:var(--dim);margin-top:8px;text-align:center"></div>
+
+      <div class="divider"></div>
+
+      <div class="card-title">AI Vulnerability Analysis</div>
+      <div style="background:var(--bg3);border:1px solid var(--border);border-radius:4px;padding:10px;margin-bottom:12px">
+        <div style="font-size:11px;color:var(--dim)">Provider</div>
+        <div style="font-size:12px;color:var(--green);margin-top:2px" id="scan-cfg-model-display">&mdash;</div>
+        <button class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%" onclick="openSettings()">Change in Settings</button>
+      </div>
+      <button class="btn btn-primary btn-full" id="scan-analyze-btn" onclick="runScanAnalysis()" disabled>Analyze for CVEs</button>
+      <div id="scan-analyze-status" style="font-size:11px;color:var(--dim);margin-top:8px;text-align:center"></div>
+
+      <div class="divider"></div>
+      <div style="font-size:10px;color:var(--dim);line-height:1.5">Findings are AI-generated candidates from service/version banners and must be manually validated. Only scan systems you are authorized to test.</div>
+    </div>
+  </div>
+</div>
+
+<!-- === STEP 6: SCAN VIEWER === -->
+<div class="step-panel" id="panel-6">
+  <div style="padding:18px;overflow-y:auto;height:100%;display:flex;flex-direction:column">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <h3 style="color:var(--green);font-size:13px;letter-spacing:1px;text-transform:uppercase">&#128203; Scan Results Viewer</h3>
+      <button class="btn btn-ghost" onclick="loadScanList()">&#8635; Refresh</button>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="color:var(--dim);text-align:left;border-bottom:1px solid var(--border)">
+        <th style="padding:6px">Scan ID</th><th style="padding:6px">Target</th><th style="padding:6px">Profile</th><th style="padding:6px">Status</th><th style="padding:6px">Hosts</th><th style="padding:6px">Actions</th>
+      </tr></thead>
+      <tbody id="scan-list-body"><tr><td colspan="6" class="empty">Click Refresh to load scans</td></tr></tbody>
+    </table>
+    <div id="scan-raw-viewer" style="display:none;margin-top:18px;flex:1;overflow:hidden;display:none;flex-direction:column">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <h4 style="color:var(--cyan);font-size:11px;text-transform:uppercase">Raw JSON &#8212; <span id="scan-raw-id"></span></h4>
+        <button class="btn btn-ghost" onclick="closeScanRaw()">&#10005; Close</button>
+      </div>
+      <pre id="scan-raw-json" style="background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:14px;overflow:auto;max-height:60vh;font-size:11px;color:var(--text)"></pre>
+    </div>
+  </div>
+</div>
+
+</div><!-- .main -->
+
+<script>
+const API = location.origin;
+const WS  = API.replace(/^http/,'ws');
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let tactics = [];
+let activeTactic = null;
+// selections: Map<"T1003:0", {technique_id, test_index}>
+const selections = new Map();
+let currentJobId = null;
+let execRunning = false;
+let execStats = {succ:0, fail:0, skip:0, total:0};
+let execWs = null;   // active execution WebSocket — kept for reset/cancel
+// ── Targets state ───────────────────────────────────────────────────────────
+let activeStep = 1;
+let targets = [];
+let targetSeq = 0;
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+function openSettings() {
+  loadSettingsToForm();
+  document.getElementById('settings-drawer').classList.add('open');
+  document.getElementById('drawer-overlay').classList.add('open');
+}
+function closeSettings() {
+  document.getElementById('settings-drawer').classList.remove('open');
+  document.getElementById('drawer-overlay').classList.remove('open');
+}
+function saveSettings() {
+  const cfg = {
+    model: document.getElementById('cfg-model').value,
+    apiKey: document.getElementById('cfg-apikey').value,
+    baseUrl: document.getElementById('cfg-baseurl').value,
+    azureBase: document.getElementById('cfg-azure-base').value,
+    orModel: document.getElementById('cfg-or-model').value,
+    keys: {
+      anthropic: document.getElementById('key-anthropic').value,
+      openai: document.getElementById('key-openai').value,
+      openrouter: document.getElementById('key-openrouter').value,
+      gemini: document.getElementById('key-gemini').value,
+      groq: document.getElementById('key-groq').value,
+      mistral: document.getElementById('key-mistral').value,
+    },
+    atomicsPath: document.getElementById('cfg-atomics-path').value,
+  };
+  localStorage.setItem('proton-red-settings', JSON.stringify(cfg));
+  updateCfgModelDisplay();
+  closeSettings();
+}
+function loadSettingsToForm() {
+  const raw = localStorage.getItem('proton-red-settings');
+  if (!raw) return;
+  const c = JSON.parse(raw);
+  if (c.model) document.getElementById('cfg-model').value = c.model;
+  if (c.apiKey) document.getElementById('cfg-apikey').value = c.apiKey;
+  if (c.baseUrl) document.getElementById('cfg-baseurl').value = c.baseUrl;
+  if (c.azureBase) document.getElementById('cfg-azure-base').value = c.azureBase;
+  if (c.orModel) document.getElementById('cfg-or-model').value = c.orModel;
+  if (c.keys) {
+    if (c.keys.anthropic) document.getElementById('key-anthropic').value = c.keys.anthropic;
+    if (c.keys.openai) document.getElementById('key-openai').value = c.keys.openai;
+    if (c.keys.openrouter) document.getElementById('key-openrouter').value = c.keys.openrouter;
+    if (c.keys.gemini) document.getElementById('key-gemini').value = c.keys.gemini;
+    if (c.keys.groq) document.getElementById('key-groq').value = c.keys.groq;
+    if (c.keys.mistral) document.getElementById('key-mistral').value = c.keys.mistral;
+  }
+  if (c.atomicsPath) document.getElementById('cfg-atomics-path').value = c.atomicsPath;
+  onCfgModelChange();
+}
+function onCfgModelChange() {
+  const m = document.getElementById('cfg-model').value;
+  document.getElementById('cfg-baseurl-wrap').style.display = (m.startsWith('ollama') || m === 'custom') ? 'block' : 'none';
+  document.getElementById('cfg-azure-wrap').style.display = m === 'azure-gpt-4o' ? 'block' : 'none';
+  document.getElementById('cfg-or-wrap').style.display = m === 'openrouter-custom' ? 'block' : 'none';
+  document.getElementById('cfg-apikey-wrap').style.display = m.startsWith('ollama') ? 'none' : 'block';
+  document.getElementById('cfg-apikey').placeholder = m.startsWith('openrouter') ? 'sk-or-v1-...' : 'sk-...';
+}
+function updateCfgModelDisplay() {
+  const raw = localStorage.getItem('proton-red-settings');
+  if (!raw) { document.getElementById('cfg-model-display').textContent = 'Not configured'; return; }
+  const c = JSON.parse(raw);
+  document.getElementById('cfg-model-display').textContent = c.model || 'Not configured';
+  // sync analysis model select
+  if (c.model) {
+    const sel = document.getElementById('a-model');
+    if (sel) sel.value = c.model;
+  }
+}
+function getSettingsProviderConfig() {
+  const raw = localStorage.getItem('proton-red-settings');
+  if (!raw) return null;
+  const c = JSON.parse(raw);
+  let model = c.model || 'claude-sonnet-4-6';
+  if (model === 'openrouter-custom') model = c.orModel || model;
+
+  // auto-fill API key from per-provider keys if main key empty
+  let apiKey = c.apiKey || '';
+  if (!apiKey && c.keys) {
+    if (model.includes('claude') || model.startsWith('anthropic')) apiKey = c.keys.anthropic || '';
+    else if (model.includes('gpt') || model.includes('o1')) apiKey = c.keys.openai || '';
+    else if (model.startsWith('openrouter')) apiKey = c.keys.openrouter || '';
+    else if (model.includes('gemini')) apiKey = c.keys.gemini || '';
+    else if (model.startsWith('groq')) apiKey = c.keys.groq || '';
+    else if (model.startsWith('mistral')) apiKey = c.keys.mistral || '';
+  }
+  return { model_id: model, api_key: apiKey || null, base_url: c.baseUrl || null, azure_api_base: c.azureBase || null };
+}
+
+// ── Session persistence ───────────────────────────────────────────────────────
+function saveSession() {
+  try {
+    const scanTarget = document.getElementById('scan-target')?.value || '';
+    const scanProfile = document.getElementById('scan-profile')?.value || 'ad-top-1000';
+    localStorage.setItem('proton-red-session', JSON.stringify({
+      targets: targets,
+      selections: Array.from(selections.entries()),
+      currentJobId: currentJobId,
+      targetSeq: targetSeq,
+      activeStep: activeStep,
+      scanTarget: scanTarget,
+      scanProfile: scanProfile,
+    }));
+  } catch(_) {}
+}
+
+function restoreSession() {
+  try {
+    const raw = localStorage.getItem('proton-red-session');
+    if (!raw) { initTargets(); goStep(1); return; }
+    const s = JSON.parse(raw);
+    if (s.targetSeq) targetSeq = s.targetSeq;
+    if (s.targets && s.targets.length) {
+      targets = s.targets;
+      renderTargets();
+    } else {
+      initTargets();
+    }
+    if (s.selections) {
+      s.selections.forEach(([k, v]) => selections.set(k, v));
+    }
+    if (s.currentJobId) {
+      currentJobId = s.currentJobId;
+      // Restore raw JSON download button if job completed
+      const rawBtn = document.getElementById('raw-json-btn');
+      if (rawBtn) {
+        rawBtn.href = `/api/results/${currentJobId}`;
+        rawBtn.style.display = 'block';
+      }
+      const analyzeBtn = document.getElementById('analyze-btn');
+      if (analyzeBtn) analyzeBtn.disabled = false;
+    }
+    if (s.scanTarget && document.getElementById('scan-target')) {
+      document.getElementById('scan-target').value = s.scanTarget;
+    }
+    if (s.scanProfile && document.getElementById('scan-profile')) {
+      document.getElementById('scan-profile').value = s.scanProfile;
+    }
+    if (s.activeStep) {
+      goStep(s.activeStep);
+    } else {
+      goStep(1);
+    }
+  } catch(_) { initTargets(); goStep(1); }
+}
+
+// ── Reset / Cancel execution ──────────────────────────────────────────────────
+function resetExecution() {
+  if (currentJobId && execRunning) {
+    fetch(`${API}/api/jobs/${currentJobId}/cancel`, { method: 'POST' }).catch(e => console.error(e));
+  }
+  if (execWs) {
+    try { execWs.close(); } catch(_) {}
+    execWs = null;
+  }
+  execRunning = false;
+  document.getElementById('run-btn').disabled = false;
+  document.getElementById('run-btn').textContent = '▶ Run Tests';
+  document.getElementById('reset-btn').style.display = 'none';
+  document.getElementById('current-test').textContent = '—';
+  addLog('b-info', 'RESET', 'Execution reset. Targets and TTP selections preserved.');
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+async function init() {
+  restoreSession();
+  await Promise.all([loadHealth(), loadTactics()]);
+  updateCfgModelDisplay();
+  initTerminal();
+}
+
+async function loadHealth() {
+  try {
+    const d = await fetch(`${API}/health`).then(r=>r.json());
+    document.getElementById('sdot').className = 'dot on';
+    document.getElementById('stxt').textContent = 'Online';
+    document.getElementById('hdr-tech').textContent = `${d.techniques_loaded} techniques`;
+  } catch {
+    document.getElementById('sdot').className = 'dot';
+    document.getElementById('stxt').textContent = 'Offline';
+  }
+}
+
+async function loadTactics() {
+  try {
+    const d = await fetch(`${API}/api/tactics`).then(r=>r.json());
+    tactics = d.tactics.filter(t => t.technique_count > 0);
+    renderTacticList();
+  } catch(e) { console.error(e); }
+}
+
+// ── Step navigation ───────────────────────────────────────────────────────────
+function goStep(n) {
+  activeStep = n;
+  [1,2,3,4,5,6].forEach(i => {
+    document.getElementById(`panel-${i}`).classList.toggle('active', i===n);
+    const tab = document.getElementById(`tab-${i}`);
+    tab.classList.remove('active','done');
+    if (i===n) tab.classList.add('active');
+    else if (i<n) tab.classList.add('done');
+  });
+  saveSession();
+}
+
+// ── Step 1: Targets ───────────────────────────────────────────────────────────
+function newTarget(preset) {
+  return Object.assign({
+    id: ++targetSeq, name: '', os: 'windows', privilege: 'standard_user',
+    connection: 'local', domain_joined: false, host: 'localhost',
+    winrm_username: '', winrm_password: '', winrm_transport: 'ntlm',
+    winrm_port: 5985, winrm_ssl: false, notes: '',
+  }, preset || {});
+}
+
+function initTargets() {
+  targets = [ newTarget({ name: 'localhost', connection: 'local' }) ];
+  renderTargets();
+}
+
+function addTarget(preset) { targets.push(newTarget(preset)); renderTargets(); afterTargetChange(); }
+
+function removeTarget(id) {
+  targets = targets.filter(t => t.id !== id);
+  if (!targets.length) targets.push(newTarget({ name: 'localhost' }));
+  renderTargets(); afterTargetChange();
+}
+
+// text inputs: state only (no re-render, keeps focus)
+function setTgt(id, k, v) { const t = targets.find(x => x.id === id); if (t) { t[k] = v; saveSession(); } }
+// selects/checkboxes that change layout or block state: update + re-render
+function setTgtR(id, k, v) { setTgt(id, k, v); renderTargets(); afterTargetChange(); }
+
+function afterTargetChange() {
+  if (activeTactic) showTactic(activeTactic);
+  renderTacticList();
+  saveSession();
+}
+
+function tgtCard(t) {
+  const rmBtn = targets.length > 1 ? `<button class="tgt-rm" onclick="removeTarget(${t.id})">✕ remove</button>` : '';
+  const remote = t.connection === 'remote' ? `
+    <div class="tgt-remote">
+      <div class="tgt-remote-title">⇄ WinRM connection (runs as-if-local on remote host)</div>
+      <div class="tgt-grid">
+        <div><label>Host / IP</label><input type="text" value="${esc(t.host)}" onchange="setTgt(${t.id},'host',this.value)" placeholder="10.0.0.5"></div>
+        <div><label>Username</label><input type="text" value="${esc(t.winrm_username)}" onchange="setTgt(${t.id},'winrm_username',this.value)" placeholder="user or DOMAIN\\user"></div>
+        <div><label>Password</label><input type="password" value="${esc(t.winrm_password)}" onchange="setTgt(${t.id},'winrm_password',this.value)" placeholder="••••••"></div>
+        <div><label>Auth</label><select onchange="setTgt(${t.id},'winrm_transport',this.value)">
+          ${[['ntlm','NTLM'],['kerberos','Kerberos'],['credssp','CredSSP'],['negotiate','Negotiate'],['basic','Basic']].map(([v,l])=>`<option value="${v}" ${t.winrm_transport===v?'selected':''}>${l}</option>`).join('')}
+        </select></div>
+        <div><label>Port</label><input type="number" value="${t.winrm_port}" onchange="setTgt(${t.id},'winrm_port',parseInt(this.value)||5985)"></div>
+        <div style="display:flex;align-items:flex-end"><label class="tgt-chk"><input type="checkbox" ${t.winrm_ssl?'checked':''} onchange="setTgtR(${t.id},'winrm_ssl',this.checked)"> SSL (5986)</label></div>
+      </div>
+    </div>` : '';
+  return `
+  <div class="tgt-card">
+    <div class="tgt-head">
+      <span class="tgt-num">#${targets.indexOf(t)+1}</span>
+      <input class="tgt-name" type="text" value="${esc(t.name)}" onchange="setTgt(${t.id},'name',this.value)" placeholder="label e.g. DC01 / localhost">
+      ${rmBtn}
+    </div>
+    <div class="tgt-grid">
+      <div><label>Connection</label><select onchange="setTgtR(${t.id},'connection',this.value)">
+        <option value="local" ${t.connection==='local'?'selected':''}>Local (this machine)</option>
+        <option value="remote" ${t.connection==='remote'?'selected':''}>Remote (WinRM)</option>
+      </select></div>
+      <div><label>OS</label><select onchange="setTgtR(${t.id},'os',this.value)">
+        ${['windows','linux','macos'].map(o=>`<option value="${o}" ${t.os===o?'selected':''}>${o}</option>`).join('')}
+      </select></div>
+      <div><label>Privilege</label><select onchange="setTgtR(${t.id},'privilege',this.value)">
+        <option value="standard_user" ${t.privilege==='standard_user'?'selected':''}>Standard user</option>
+        <option value="admin" ${t.privilege==='admin'?'selected':''}>Admin / elevated</option>
+      </select></div>
+      <div style="display:flex;align-items:flex-end"><label class="tgt-chk"><input type="checkbox" ${t.domain_joined?'checked':''} onchange="setTgtR(${t.id},'domain_joined',this.checked)"> Domain-joined</label></div>
+    </div>
+    ${remote}
+  </div>`;
+}
+
+function renderTargets() {
+  document.getElementById('targets-list').innerHTML = targets.map(tgtCard).join('');
+}
+
+// ── Scope compatibility ───────────────────────────────────────────────────────
+// A test is "blocked" in the preview only if it would be skipped on EVERY target.
+// Backend enforces per-target skip authoritatively; this is just UI hinting.
+const _DOWNLOAD_PATTERNS = [
+  'new-object net.webclient','invoke-webrequest','start-bitstransfer',
+  'iwr http','iwr https','(new-object system.net.webclient)','downloadfile(','downloadstring(',
+  'invoke-expression (new-object','iex (new-object','iex(new-object',
+];
+function commandNeedsDownload(cmd) {
+  if (!cmd) return false;
+  const low = cmd.toLowerCase();
+  return _DOWNLOAD_PATTERNS.some(p => low.includes(p));
+}
+
+function targetSkips(t, test) {
+  const plats = test.platforms || [];
+  if (plats.length > 0 && !plats.includes(t.os) && !plats.includes('all')) return `Platform — needs ${plats.join(', ')}`;
+  if (test.elevation_required && t.privilege !== 'admin') return 'Requires elevation';
+  if (test.domain_required && !t.domain_joined) return 'Requires domain membership';
+  if (t.connection === 'remote' && ['bash','sh'].includes(test.executor)) return 'WinRM cannot run bash/sh';
+  return null;
+}
+
+function getScopeBlock(tid, test) {
+  if (!targets.length) return null;
+  const reasons = targets.map(t => targetSkips(t, test));
+  if (reasons.every(r => r !== null)) return reasons[0];  // blocked on all targets
+  return null;
+}
+
+// ── Step 2: TTP Selection ─────────────────────────────────────────────────────
+function countBlockedInTactic(tacticId) {
+  const t = tactics.find(x=>x.id===tacticId);
+  if (!t) return 0;
+  let count = 0;
+  t.techniques.forEach(tech => {
+    tech.tests.forEach((test) => { if (getScopeBlock(tech.technique_id, test)) count++; });
+  });
+  return count;
+}
+
+function renderTacticList() {
+  const list = document.getElementById('tactic-list');
+  list.innerHTML = tactics.map(t => {
+    const selCount = countSelectedInTactic(t.id);
+    const blockedCount = countBlockedInTactic(t.id);
+    const blockedHint = blockedCount > 0 ? ` <span style="color:var(--red);font-size:9px" title="${blockedCount} tests blocked for this scope">⛔${blockedCount}</span>` : '';
+    return `<div class="tactic-item ${activeTactic===t.id?'active':''}" onclick="showTactic('${t.id}')" id="tli-${t.id}">
+      <span class="tactic-name">${t.icon} ${t.name}${blockedHint}</span>
+      <span class="tactic-badge ${selCount>0?'has-selected':''}" id="tbadge-${t.id}">${selCount>0?selCount:t.technique_count}</span>
+    </div>`;
+  }).join('');
+}
+
+function countSelectedInTactic(tacticId) {
+  const t = tactics.find(x=>x.id===tacticId);
+  if (!t) return 0;
+  let count = 0;
+  t.techniques.forEach(tech => {
+    tech.tests.forEach((test,i) => {
+      if (!getScopeBlock(tech.technique_id, test) && selections.has(`${tech.technique_id}:${i}`)) count++;
+    });
+  });
+  return count;
+}
+
+function showTactic(id) {
+  activeTactic = id;
+  // update active class
+  document.querySelectorAll('.tactic-item').forEach(el => el.classList.remove('active'));
+  const el = document.getElementById(`tli-${id}`);
+  if (el) el.classList.add('active');
+
+  const tac = tactics.find(t=>t.id===id);
+  if (!tac) return;
+
+  const panel = document.getElementById('technique-panel');
+  panel.innerHTML = `
+    <div class="technique-header">
+      <span class="technique-title">${tac.icon} ${tac.name} <span style="font-size:12px;color:var(--dim)">(${tac.technique_count} techniques)</span></span>
+      <div class="quick-actions">
+        <button class="btn btn-ghost btn-sm" onclick="selectAllInTactic('${id}')">Select All</button>
+        <button class="btn btn-ghost btn-sm" onclick="clearTactic('${id}')">Clear</button>
+      </div>
+    </div>
+    ${tac.techniques.map(tech => renderTechniqueRow(tech)).join('')}
+  `;
+}
+
+function renderTechniqueRow(tech) {
+  const allBlocked = tech.tests.every((t,i) => !!getScopeBlock(tech.technique_id, t));
+  const anyChecked = !allBlocked && tech.tests.some((_,i) => selections.has(`${tech.technique_id}:${i}`));
+  const allChecked = !allBlocked && tech.tests.every((t,i) => !getScopeBlock(tech.technique_id, t) && selections.has(`${tech.technique_id}:${i}`));
+  const blockedCount = tech.tests.filter((t,i) => !!getScopeBlock(tech.technique_id, t)).length;
+  const domainBadge = tech.domain_required ? '<span class="tag" style="border-color:#bc8cff;color:#bc8cff;font-size:9px">🏢 AD</span>' : '';
+  const blockBadge = allBlocked ? '<span class="tag" style="border-color:var(--red);color:var(--red);font-size:9px">⛔ scope blocked</span>' : (blockedCount > 0 ? `<span class="tag" style="border-color:var(--orange);color:var(--orange);font-size:9px">⚠ ${blockedCount} blocked</span>` : '');
+  const rowStyle = allBlocked ? 'opacity:.5;' : '';
+
+  return `<div class="technique-row ${anyChecked?'selected':''}" id="trow-${tech.technique_id}" style="${rowStyle}">
+    <div class="technique-header-row" onclick="toggleTechniqueExpand('${tech.technique_id}')">
+      <div class="tech-check ${anyChecked?'checked':''}" onclick="event.stopPropagation();${allBlocked?'':` toggleAllTests('${tech.technique_id}')`}" id="tc-${tech.technique_id}" style="${allBlocked?'cursor:not-allowed;':''}">${allChecked?'✓':anyChecked?'−':allBlocked?'✗':''}</div>
+      <span class="tech-id">${tech.technique_id}</span>
+      <span class="tech-name">${tech.display_name}</span>
+      <span style="display:flex;gap:4px;align-items:center">${domainBadge}${blockBadge}</span>
+      <span class="tech-count">${tech.test_count} tests</span>
+      <span class="tech-expand" id="texp-${tech.technique_id}">▼</span>
+    </div>
+    <div class="test-list" id="tlist-${tech.technique_id}" style="display:none">
+      ${tech.tests.map((test,i) => renderTestItem(tech.technique_id, test, i)).join('')}
+    </div>
+  </div>`;
+}
+
+function renderTestItem(tid, test, idx) {
+  const key = `${tid}:${idx}`;
+  const blockReason = getScopeBlock(tid, test);
+  const blocked = !!blockReason;
+  // auto-deselect if newly blocked
+  if (blocked && selections.has(key)) selections.delete(key);
+  const checked = !blocked && selections.has(key);
+  const platforms = test.platforms || [];
+  const platTags = platforms.map(p=>`<span class="tag ${p==='windows'?'win':p==='linux'?'lin':''}">${p}</span>`).join('');
+  const elevTag = test.elevation_required ? '<span class="tag elev">⬆ elev</span>' : '';
+  const domainTag = test.domain_required ? '<span class="tag" style="border-color:#bc8cff;color:#bc8cff">🏢 domain</span>' : '';
+  const dlTag = test.needs_download ? '<span class="tag" style="border-color:#f0a500;color:#f0a500" title="Requires internet download at runtime — will be auto-skipped in isolated environments">⬇ download</span>' : '';
+  const execTag = `<span class="tag">${test.executor}</span>`;
+  const blockTag = blocked ? `<span class="tag" style="border-color:var(--red);color:var(--red)" title="${esc(blockReason)}">⛔ blocked</span>` : '';
+  const blockStyle = blocked ? 'opacity:.4;pointer-events:none;' : '';
+  const checkHtml = blocked
+    ? `<div class="test-check" style="cursor:not-allowed;opacity:.3" title="${esc(blockReason)}">✗</div>`
+    : `<div class="test-check ${checked?'checked':''}" onclick="toggleTest('${tid}',${idx})" id="tc2-${tid}-${idx}">${checked?'✓':''}</div>`;
+  return `<div class="test-item" id="ti-${tid}-${idx}" style="${blockStyle}">
+    ${checkHtml}
+    <div class="test-info">
+      <div class="test-name-text">[${idx}] ${esc(test.name)}</div>
+      <div class="test-meta">${platTags}${elevTag}${domainTag}${dlTag}${execTag}${blockTag}</div>
+      ${blocked ? `<div style="font-size:10px;color:var(--red);margin-top:2px">${esc(blockReason)}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+function toggleTechniqueExpand(tid) {
+  const list = document.getElementById(`tlist-${tid}`);
+  const exp = document.getElementById(`texp-${tid}`);
+  const expanded = list.style.display === 'block';
+  list.style.display = expanded ? 'none' : 'block';
+  exp.textContent = expanded ? '▼' : '▲';
+}
+
+function toggleTest(tid, idx) {
+  const key = `${tid}:${idx}`;
+  if (selections.has(key)) selections.delete(key);
+  else selections.set(key, {technique_id: tid, test_index: idx});
+  updateSelectionUI(tid);
+  saveSession();
+}
+
+function toggleAllTests(tid) {
+  const tac = tactics.find(t => t.techniques.some(x=>x.technique_id===tid));
+  if (!tac) return;
+  const tech = tac.techniques.find(x=>x.technique_id===tid);
+  if (!tech) return;
+  const anyChecked = tech.tests.some((_,i) => selections.has(`${tid}:${i}`));
+  tech.tests.forEach((test,i) => {
+    if (getScopeBlock(tid, test)) return; // skip blocked
+    const key = `${tid}:${i}`;
+    if (anyChecked) selections.delete(key);
+    else selections.set(key, {technique_id: tid, test_index: i});
+  });
+  updateSelectionUI(tid);
+  if (activeTactic) showTactic(activeTactic);
+  saveSession();
+}
+
+function selectAllInTactic(tacId) {
+  const tac = tactics.find(t=>t.id===tacId);
+  if (!tac) return;
+  tac.techniques.forEach(tech => {
+    tech.tests.forEach((test,i) => {
+      if (!getScopeBlock(tech.technique_id, test))
+        selections.set(`${tech.technique_id}:${i}`, {technique_id: tech.technique_id, test_index: i});
+    });
+  });
+  renderTacticList();
+  if (activeTactic === tacId) showTactic(tacId);
+  updateSelCount();
+  saveSession();
+}
+
+function clearTactic(tacId) {
+  const tac = tactics.find(t=>t.id===tacId);
+  if (!tac) return;
+  tac.techniques.forEach(tech => {
+    tech.tests.forEach((_,i) => selections.delete(`${tech.technique_id}:${i}`));
+  });
+  renderTacticList();
+  if (activeTactic === tacId) showTactic(tacId);
+  updateSelCount();
+  saveSession();
+}
+
+function clearAllSelections() {
+  selections.clear();
+  if (activeTactic) showTactic(activeTactic);
+  renderTacticList();
+  updateSelCount();
+  saveSession();
+}
+
+function updateSelectionUI(tid) {
+  renderTacticList();
+  updateSelCount();
+  // refresh test checkboxes in current view without full re-render
+  const tac = tactics.find(t => t.techniques.some(x=>x.technique_id===tid));
+  if (!tac) return;
+  const tech = tac.techniques.find(x=>x.technique_id===tid);
+  if (!tech) return;
+  tech.tests.forEach((_,i) => {
+    const key = `${tid}:${i}`;
+    const chk = document.getElementById(`tc2-${tid}-${i}`);
+    if (chk) {
+      chk.className = `test-check ${selections.has(key)?'checked':''}`;
+      chk.textContent = selections.has(key) ? '✓' : '';
+    }
+  });
+  const mainChk = document.getElementById(`tc-${tid}`);
+  if (mainChk) {
+    const anyChecked = tech.tests.some((_,i) => selections.has(`${tid}:${i}`));
+    const allChecked = tech.tests.every((_,i) => selections.has(`${tid}:${i}`));
+    mainChk.className = `tech-check ${anyChecked?'checked':''}`;
+    mainChk.textContent = allChecked ? '✓' : anyChecked ? '−' : '';
+  }
+}
+
+function updateSelCount() {
+  document.getElementById('sel-count').textContent = selections.size;
+}
+
+function addManual() {
+  const tid = document.getElementById('manual-tid').value.trim().toUpperCase();
+  const idx = parseInt(document.getElementById('manual-idx').value) || 0;
+  if (!tid) return;
+  const key = `${tid}:${idx}`;
+  selections.set(key, {technique_id: tid, test_index: idx});
+  document.getElementById('manual-tid').value = '';
+  updateSelCount();
+  // Refresh view if same tactic
+  if (activeTactic) showTactic(activeTactic);
+}
+
+// ── Step 3: Execute ───────────────────────────────────────────────────────────
+async function runExecution() {
+  if (execRunning) return;
+  if (selections.size === 0) { alert('No tests selected'); return; }
+  if (!targets.length) { alert('Add at least one target'); return; }
+
+  // Validate remote targets have host + creds
+  for (const t of targets) {
+    if (t.connection === 'remote' && (!t.host.trim() || !t.winrm_username.trim())) {
+      alert(`Remote target "${t.name||'#'+(targets.indexOf(t)+1)}" needs host + username`);
+      return;
+    }
+  }
+
+  const payloadTargets = targets.map((t, i) => ({
+    target_id: 'tgt-' + (i + 1),
+    name: t.name.trim() || (t.connection === 'remote' ? t.host.trim() : 'localhost'),
+    os_platform: t.os,
+    privilege: t.privilege,
+    connection: t.connection,
+    domain_joined: !!t.domain_joined,
+    host: t.host.trim(),
+    winrm_username: t.winrm_username.trim(),
+    winrm_password: t.winrm_password,
+    winrm_transport: t.winrm_transport,
+    winrm_port: t.winrm_port,
+    winrm_ssl: !!t.winrm_ssl,
+    notes: t.notes,
+  }));
+
+  const sels = Array.from(selections.values());
+  const totalRuns = sels.length * payloadTargets.length;
+
+  execRunning = true;
+  document.getElementById('run-btn').disabled = true;
+  document.getElementById('run-btn').textContent = '⏳ Running...';
+  resetExecStats(totalRuns);
+  clearExecLog();
+
+  // Create job
+  let jobId;
+  try {
+    const r = await fetch(`${API}/api/jobs`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({targets: payloadTargets, selections: sels}),
+    }).then(r=>r.json());
+    jobId = r.job_id;
+    currentJobId = jobId;
+    saveSession();
+  } catch(e) {
+    addLog('b-info', 'ERROR', `Failed to create job: ${e}`);
+    execRunning = false;
+    document.getElementById('run-btn').disabled = false;
+    document.getElementById('run-btn').textContent = '▶ Run Tests';
+    return;
+  }
+
+  const tgtSummary = payloadTargets.map(t => `${t.name}${t.connection==='remote'?'(WinRM)':''}`).join(', ');
+  addLog('b-info', 'START', `Job ${jobId.slice(0,8)} — ${sels.length} tests × ${payloadTargets.length} targets = ${totalRuns} runs | ${tgtSummary}`);
+
+  document.getElementById('reset-btn').style.display = 'block';
+  execWs = new WebSocket(`${WS}/ws/execute/${jobId}`);
+
+  execWs.onmessage = e => {
+    const ev = JSON.parse(e.data);
+    handleExecEvent(ev, totalRuns);
+  };
+
+  execWs.onerror = () => {
+    addLog('b-info', 'ERROR', 'WebSocket error');
+    execRunning = false;
+    document.getElementById('run-btn').disabled = false;
+    document.getElementById('run-btn').textContent = '▶ Run Tests';
+  };
+
+  execWs.onclose = () => {
+    execRunning = false;
+    execWs = null;
+    document.getElementById('run-btn').disabled = false;
+    document.getElementById('run-btn').textContent = '▶ Run Tests';
+  };
+}
+
+function handleExecEvent(ev, total) {
+  const {type, data} = ev;
+
+  const tg = data.target_name ? `[${data.target_name}] ` : '';
+
+  if (type === 'target_start') {
+    addLog('b-info', 'TARGET', `▶ ${data.name} — ${data.connection==='remote'?'WinRM '+data.host:'local'}`);
+  }
+  else if (type === 'test_start') {
+    document.getElementById('current-test').textContent = `${tg}${data.technique_id} · ${(data.test_name||'').slice(0,36)}`;
+    if (data.skipped) return;
+    addLog('b-start', 'RUN', `${tg}${data.technique_id} — ${esc((data.test_name||'').slice(0,55))}`);
+  }
+  else if (type === 'test_done') {
+    const ok = data.success;
+    execStats[ok?'succ':'fail']++;
+    updateStatBoxes();
+    const prog = data.progress || '';
+    const [done, tot] = prog.split('/').map(Number);
+    updateProgress(done, tot || total);
+    addLog(ok?'b-done-ok':'b-done-fail', ok?'OK':'FAIL',
+      `${tg}${data.technique_id} exit:${data.exit_code} ${data.duration_ms}ms`,
+      data.stdout_preview);
+  }
+  else if (type === 'skipped') {
+    execStats.skip++;
+    updateStatBoxes();
+    const prog = data.progress || '';
+    const [done, tot] = prog.split('/').map(Number);
+    if (done) updateProgress(done, tot || total);
+    addLog('b-skip', 'SKIP', `${tg}${data.technique_id} — ${data.reason}`);
+  }
+  else if (type === 'execution_complete') {
+    document.getElementById('current-test').textContent = '—';
+    document.getElementById('reset-btn').style.display = 'none';
+    addLog('b-complete', 'DONE', `Complete — ✓${data.succeeded} ✗${data.failed} ⏭${data.skipped}`);
+    updateProgress(total, total);
+    document.getElementById('analyze-btn').disabled = false;
+    const rawBtn = document.getElementById('raw-json-btn');
+    rawBtn.href = `/api/results/${data.job_id}`;
+    rawBtn.style.display = 'block';
+    saveSession();
+    goStep(4);
+  }
+  else if (type === 'error') {
+    addLog('b-info', 'ERROR', data.message);
+  }
+}
+
+function addLog(cls, label, msg, stdout) {
+  const container = document.getElementById('exec-log');
+  const empty = document.getElementById('exec-empty');
+  if (empty) empty.remove();
+  const now = new Date();
+  const ts = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  const div = document.createElement('div');
+  div.className = 'log-line';
+  div.innerHTML = `
+    <span class="log-ts">${ts}</span>
+    <span class="log-badge ${cls}">${label}</span>
+    <span class="log-msg">${esc(msg)}${stdout&&stdout.trim()?`<div class="stdout-pre">${esc(stdout.trim().slice(0,2000))}</div>`:''}</span>
+  `;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function addManualCommandLog(cmd) {
+  const container = document.getElementById('exec-log');
+  const empty = document.getElementById('exec-empty');
+  if (empty) empty.remove();
+  
+  const div = document.createElement('div');
+  div.className = 'terminal-user-command';
+  div.innerHTML = `
+    <span class="terminal-prompt">protonred@localhost:~$</span>
+    <span class="log-msg" style="color: #ffffff; font-weight: bold;">${esc(cmd)}</span>
+  `;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function addTerminalOutput(text, type) {
+  const container = document.getElementById('exec-log');
+  const div = document.createElement('div');
+  div.className = 'log-line';
+  
+  let color = '#33ff33'; // stdout (green)
+  if (type === 'stderr') color = '#ff4757'; // stderr (red)
+  else if (type === 'error') color = '#ff4757';
+  else if (type === 'info') color = '#58a6ff'; // info (blue)
+  
+  div.innerHTML = `
+    <pre style="color: ${color}; font-family: inherit; font-size: 11px; white-space: pre-wrap; margin: 0; width: 100%;">${esc(text)}</pre>
+  `;
+  container.appendChild(div);
+  container.scrollTop = container.scrollHeight;
+}
+
+function initTerminal() {
+  const terminalInput = document.getElementById('terminal-input');
+  if (terminalInput) {
+    terminalInput.addEventListener('keydown', async function(e) {
+      if (e.key === 'Enter') {
+        const cmd = this.value.trim();
+        if (!cmd) return;
+        this.value = '';
+        
+        addManualCommandLog(cmd);
+        
+        try {
+          const response = await fetch('/api/terminal/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: cmd })
+          });
+          const data = await response.json();
+          if (data.stdout && data.stdout.trim()) {
+            addTerminalOutput(data.stdout, 'stdout');
+          }
+          if (data.stderr && data.stderr.trim()) {
+            addTerminalOutput(data.stderr, 'stderr');
+          }
+          if (!data.stdout && !data.stderr) {
+            addTerminalOutput('[Command executed with exit code ' + data.exit_code + ']', 'info');
+          }
+        } catch (err) {
+          addTerminalOutput('Error: ' + err.message, 'error');
+        }
+      }
+    });
+  }
+}
+
+function clearExecLog() {
+  document.getElementById('exec-log').innerHTML = '<div class="empty" id="exec-empty">Configure targets and TTPs, then click Run</div>';
+}
+
+function resetExecStats(total) {
+  execStats = {succ:0, fail:0, skip:0, total};
+  updateStatBoxes();
+  updateProgress(0, total);
+}
+
+function updateStatBoxes() {
+  document.getElementById('s-succ').textContent = execStats.succ;
+  document.getElementById('s-fail').textContent = execStats.fail;
+  document.getElementById('s-skip').textContent = execStats.skip;
+  document.getElementById('s-total').textContent = execStats.total;
+}
+
+function updateProgress(done, total) {
+  const pct = total > 0 ? Math.round((done/total)*100) : 0;
+  document.getElementById('exec-prog').style.width = pct + '%';
+  document.getElementById('exec-prog-txt').textContent = `${done} / ${total}`;
+}
+
+// ── Step 4: Analysis ──────────────────────────────────────────────────────────
+function onAModelChange() {
+  const m = document.getElementById('a-model').value;
+  document.getElementById('a-or-custom').style.display = m==='openrouter-custom' ? 'block' : 'none';
+  document.getElementById('a-apikey').placeholder = m.startsWith('openrouter') ? 'sk-or-v1-...' : 'sk-...';
+  document.getElementById('a-apikey-group').style.display = m.startsWith('ollama') ? 'none' : 'block';
+}
+
+// -- Step 6: Scan Viewer -------------------------------------------------------
+async function loadScanList() {
+  try {
+    const res = await fetch('/api/scans');
+    const data = await res.json();
+    const tbody = document.getElementById('scan-list-body');
+    if (!data.scans || !data.scans.length) { tbody.innerHTML = '<tr><td colspan="6" class="empty">No scans found</td></tr>'; return; }
+    tbody.innerHTML = data.scans.map(s => `<tr style="border-bottom:1px solid var(--border)">
+      <td style="padding:6px;color:var(--cyan)">${s.scan_id.slice(0,8)}\u2026</td>
+      <td style="padding:6px">${s.target}</td>
+      <td style="padding:6px">${s.profile}</td>
+      <td style="padding:6px">${s.status}</td>
+      <td style="padding:6px">${s.host_count}</td>
+      <td style="padding:6px"><button class="btn btn-ghost" onclick="viewScanRaw('${s.scan_id}')">View JSON</button></td>
+    </tr>`).join('');
+  } catch(e) { console.error('Failed to load scans:', e); }
+}
+async function viewScanRaw(id) {
+  try {
+    const res = await fetch(`/api/scans/${id}/raw`);
+    const data = await res.json();
+    document.getElementById('scan-raw-id').textContent = id;
+    document.getElementById('scan-raw-json').textContent = JSON.stringify(data, null, 2);
+    const viewer = document.getElementById('scan-raw-viewer');
+    viewer.style.display = 'flex';
+  } catch(e) { console.error('Failed to load scan:', e); }
+}
+function closeScanRaw() { document.getElementById('scan-raw-viewer').style.display = 'none'; }
+
+// -- Step 5: Port Scan + Vulnerability Analysis -------------------------------
+let currentScanId = null;
+let currentScanData = null;
+let scanWs = null;
+
+function scanEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function setScanModelDisplay() {
+  try {
+    const c = getSettingsProviderConfig();
+    const el = document.getElementById('scan-cfg-model-display');
+    if (el) el.textContent = (c && c.model_id) ? c.model_id : 'Not configured';
+  } catch(_) {}
+}
+
+async function runScan() {
+  const target = (document.getElementById('scan-target').value || '').trim();
+  if (!target) { alert('Enter a target host / IP / CIDR'); return; }
+  const profile = document.getElementById('scan-profile').value;
+  setScanModelDisplay();
+
+  const btn = document.getElementById('scan-btn');
+  btn.disabled = true;
+  document.getElementById('scan-analyze-btn').disabled = true;
+  document.getElementById('scan-status').textContent = 'Scanning ' + target + ' ...';
+  document.getElementById('scan-main').innerHTML = '<div class="empty">Running nmap scan - this can take a while for large port ranges...</div>';
+
+  try {
+    const r = await fetch(`${API}/api/scans`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target, profile }),
+    });
+    const data = await r.json();
+    if (!r.ok || data.status === 'error') {
+      const msg = (data && (data.error || (data.detail && JSON.stringify(data.detail)))) || ('HTTP ' + r.status);
+      document.getElementById('scan-status').textContent = 'Scan failed';
+      document.getElementById('scan-main').innerHTML = `<div class="empty">Scan failed: ${scanEsc(msg)}</div>`;
+      btn.disabled = false;
+      return;
+    }
+    currentScanId = data.scan_id;
+    currentScanData = data.scan;
+    document.getElementById('scan-status').textContent = 'Scan complete';
+    document.getElementById('scan-analyze-btn').disabled = false;
+    renderScanResults(data.scan);
+  } catch(e) {
+    document.getElementById('scan-status').textContent = 'Error';
+    document.getElementById('scan-main').innerHTML = `<div class="empty">Request failed: ${scanEsc(String(e))}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderScanResults(scan) {
+  const hosts = (scan && scan.hosts) || [];
+  let openCount = 0;
+  let html = '<div class="section-title">Scan Results</div>';
+  html += `<div style="font-size:11px;color:var(--dim);margin-bottom:10px">Target: <span style="color:var(--green)">${scanEsc(scan.target||'')}</span> &middot; Profile: ${scanEsc(scan.profile||'')} &middot; ${scanEsc(scan.status||'')}</div>`;
+  if (!hosts.length) { html += '<div class="empty">No hosts responded (host may be down or filtered).</div>'; }
+  hosts.forEach(h => {
+    const openPorts = (h.ports||[]).filter(p => p.state === 'open');
+    openCount += openPorts.length;
+    html += `<div class="card" style="margin-bottom:10px"><div class="card-title">${scanEsc(h.host||'')}${h.hostname ? ' ('+scanEsc(h.hostname)+')' : ''} &middot; <span style="color:var(--dim);font-weight:normal">${scanEsc(h.state||'')}</span></div>`;
+    if (h.os_guess) html += `<div style="font-size:11px;color:var(--dim);margin-bottom:6px">OS guess: ${scanEsc(h.os_guess)}</div>`;
+    if (!openPorts.length) { html += '<div style="font-size:11px;color:var(--dim)">No open ports.</div>'; }
+    else {
+      html += '<table style="width:100%;border-collapse:collapse;font-size:12px"><tr style="color:var(--dim);text-align:left"><th style="padding:3px 6px">Port</th><th style="padding:3px 6px">Service</th><th style="padding:3px 6px">Product / Version</th></tr>';
+      openPorts.forEach(p => {
+        const ver = [p.product, p.version, p.extrainfo].filter(Boolean).join(' ');
+        html += `<tr style="border-top:1px solid var(--border)"><td style="padding:3px 6px;color:var(--green)">${p.port}/${scanEsc(p.protocol||'tcp')}</td><td style="padding:3px 6px">${scanEsc(p.service||'')}</td><td style="padding:3px 6px;color:var(--dim)">${scanEsc(ver)}</td></tr>`;
+      });
+      html += '</table>';
+    }
+    html += '</div>';
+  });
+  html += `<div style="font-size:11px;color:var(--dim)">${openCount} open port(s) found. Click "Analyze for CVEs" to assess.</div>`;
+  html += '<div class="section-title" style="margin-top:16px">AI Vulnerability Analysis</div><div class="ai-stream" id="scan-ai-stream" style="display:none"></div><div id="scan-findings-area"></div>';
+  document.getElementById('scan-main').innerHTML = html;
+}
+
+async function runScanAnalysis() {
+  if (!currentScanId) { alert('Run a scan first'); return; }
+  const provCfg = getSettingsProviderConfig();
+  if (!provCfg) { alert('Configure AI provider in Settings first'); openSettings(); return; }
+  if (!provCfg.model_id.startsWith('ollama') && !provCfg.api_key) { alert('API key missing - configure in Settings'); openSettings(); return; }
+  setScanModelDisplay();
+  document.getElementById('scan-analyze-btn').disabled = true;
+  document.getElementById('scan-analyze-status').textContent = 'Connecting...';
+
+  if (!document.getElementById('scan-findings-area')) { renderScanResults(currentScanData || { hosts: [] }); }
+  const streamEl = document.getElementById('scan-ai-stream');
+  if (streamEl) { streamEl.style.display = 'block'; streamEl.textContent = 'Waiting for AI response...'; }
+  document.getElementById('scan-findings-area').innerHTML = '<div class="empty">Parsing findings...</div>';
+
+  scanWs = new WebSocket(`${WS}/ws/scan-analyze/${currentScanId}`);
+  let fullText = '';
+  scanWs.onopen = () => { scanWs.send(JSON.stringify({ scan_id: currentScanId, provider: provCfg })); };
+  scanWs.onmessage = e => {
+    const ev = JSON.parse(e.data);
+    if (ev.type === 'analysis_start') {
+      document.getElementById('scan-analyze-status').textContent = `Analyzing with ${ev.data.model}...`;
+      const s = document.getElementById('scan-ai-stream'); if (s) s.textContent = '';
+    } else if (ev.type === 'token') {
+      fullText += ev.data.token;
+      const s = document.getElementById('scan-ai-stream'); if (s) { s.textContent = fullText.slice(-800); s.scrollTop = s.scrollHeight; }
+    } else if (ev.type === 'analysis_complete') {
+      document.getElementById('scan-analyze-status').textContent = ev.data.error ? ('Error: ' + ev.data.error) : '';
+      document.getElementById('scan-analyze-btn').disabled = false;
+      renderVulnReport(ev.data);
+    } else if (ev.type === 'error') {
+      document.getElementById('scan-analyze-status').textContent = 'Error: ' + ev.data.message;
+      document.getElementById('scan-analyze-btn').disabled = false;
+    }
+  };
+  scanWs.onerror = () => {
+    document.getElementById('scan-analyze-status').textContent = 'WebSocket error';
+    document.getElementById('scan-analyze-btn').disabled = false;
+  };
+}
+
+function renderVulnReport(rep) {
+  const area = document.getElementById('scan-findings-area');
+  if (!area) return;
+  const sevColors = {critical:'var(--crit)',high:'var(--high)',medium:'var(--med)',low:'var(--low)',info:'var(--info)'};
+  const findings = rep.findings || [];
+  let html = '';
+  if (rep.executive_summary) html += `<div class="card" style="margin-bottom:10px"><div class="card-title">Summary &middot; Risk: <span style="color:${sevColors[rep.risk_level]||'var(--info)'}">${scanEsc((rep.risk_level||'info').toUpperCase())}</span></div><div style="font-size:12px;line-height:1.5">${scanEsc(rep.executive_summary)}</div>${rep.attack_surface ? `<div style="font-size:11px;color:var(--dim);margin-top:6px">Attack surface: ${scanEsc(rep.attack_surface)}</div>` : ''}</div>`;
+  if (!findings.length) { html += '<div class="empty">No candidate vulnerabilities reported.</div>'; }
+  findings.forEach(f => {
+    const col = sevColors[f.severity] || 'var(--info)';
+    const cves = (f.cve_ids||[]).join(', ');
+    html += `<div class="card" style="margin-bottom:8px;border-left:3px solid ${col}">`;
+    html += `<div style="display:flex;justify-content:space-between;align-items:center"><div class="card-title" style="margin:0">${scanEsc(f.title||f.service||'Finding')}</div><span style="font-size:10px;color:${col};text-transform:uppercase">${scanEsc(f.severity||'info')} &middot; ${scanEsc(f.confidence||'')}</span></div>`;
+    html += `<div style="font-size:11px;color:var(--dim);margin:4px 0">${scanEsc(f.host||'')}${f.port ? ':'+f.port : ''} &middot; ${scanEsc(f.product||f.service||'')} ${scanEsc(f.version||'')}</div>`;
+    if (cves) html += `<div style="font-size:12px;margin-bottom:4px">CVE: <span style="color:var(--high)">${scanEsc(cves)}</span></div>`;
+    if (f.detail) html += `<div style="font-size:12px;line-height:1.5">${scanEsc(f.detail)}</div>`;
+    if (f.evidence) html += `<div style="font-size:11px;color:var(--dim);margin-top:4px">Evidence: ${scanEsc(f.evidence)}</div>`;
+    if (f.recommendation) html += `<div style="font-size:11px;color:var(--green);margin-top:4px">${scanEsc(f.recommendation)}</div>`;
+    html += '</div>';
+  });
+  area.innerHTML = html;
+}
+
+async function runAnalysis() {
+  if (!currentJobId) { alert('Run execution first'); return; }
+
+  const provCfg = getSettingsProviderConfig();
+  if (!provCfg) { alert('Configure AI provider in Settings first'); openSettings(); return; }
+  if (!provCfg.model_id.startsWith('ollama') && !provCfg.api_key) {
+    alert('API key missing — configure in Settings'); openSettings(); return;
+  }
+  const { model_id: model, api_key: apiKey } = provCfg;
+
+  document.getElementById('analyze-btn').disabled = true;
+  document.getElementById('analyze-status').textContent = 'Connecting...';
+
+  const main = document.getElementById('analysis-main');
+  main.innerHTML = `
+    <div class="section-title">AI Analysis Stream</div>
+    <div class="ai-stream" id="ai-stream">Waiting for AI response...</div>
+    <div class="section-title" style="margin-top:16px">Findings</div>
+    <div id="findings-area"><div class="empty">Parsing findings...</div></div>
+  `;
+
+  const ws = new WebSocket(`${WS}/ws/analyze/${currentJobId}`);
+  let fullText = '';
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ job_id: currentJobId, provider: provCfg }));
+  };
+
+  ws.onmessage = e => {
+    const ev = JSON.parse(e.data);
+    if (ev.type === 'analysis_start') {
+      document.getElementById('analyze-status').textContent = `Analyzing with ${ev.data.model}...`;
+      document.getElementById('ai-stream').textContent = '';
+    }
+    else if (ev.type === 'token') {
+      fullText += ev.data.token;
+      const stream = document.getElementById('ai-stream');
+      if (stream) { stream.textContent = fullText.slice(-800); stream.scrollTop = stream.scrollHeight; }
+    }
+    else if (ev.type === 'analysis_complete') {
+      document.getElementById('analyze-status').textContent = '';
+      document.getElementById('analyze-btn').disabled = false;
+      document.getElementById('report-btn').style.display = 'block';
+      document.getElementById('pdf-btn').style.display = 'block';
+      if (ev.data.error) {
+        document.getElementById('analyze-status').textContent = 'Error: ' + ev.data.error;
+      } else {
+        loadAndRenderAnalysis();
+      }
+    }
+    else if (ev.type === 'error') {
+      document.getElementById('analyze-status').textContent = 'Error: ' + ev.data.message;
+      document.getElementById('analyze-btn').disabled = false;
+    }
+  };
+
+  ws.onerror = () => {
+    document.getElementById('analyze-status').textContent = 'WebSocket error';
+    document.getElementById('analyze-btn').disabled = false;
+  };
+}
+
+async function loadAndRenderAnalysis() {
+  try {
+    const data = await fetch(`${API}/api/jobs/${currentJobId}/analysis`).then(r=>r.json());
+    renderAnalysisResults(data);
+  } catch(e) {
+    document.getElementById('findings-area').innerHTML = `<div class="empty">Failed to load: ${e}</div>`;
+  }
+}
+
+function renderAnalysisResults(data) {
+  const sevColors = {critical:'var(--crit)',high:'var(--high)',medium:'var(--med)',low:'var(--low)',info:'var(--info)'};
+  const counts = {critical:0,high:0,medium:0,low:0,info:0};
+  (data.findings||[]).forEach(f => { counts[f.severity]=(counts[f.severity]||0)+1; });
+
+  const countBadges = Object.entries(counts).filter(([,v])=>v>0)
+    .map(([s,v])=>`<span class="sev-count sev-${s}" style="background:${sevColors[s]}">${v} ${s.toUpperCase()}</span>`).join('');
+
+  const findings = (data.findings||[])
+    .sort((a,b)=>['critical','high','medium','low','info'].indexOf(a.severity)-['critical','high','medium','low','info'].indexOf(b.severity))
+    .map(f=>`
+      <div class="finding-card">
+        <div class="finding-head">
+          <span class="sev sev-${f.severity}">${f.severity.toUpperCase()}</span>
+          <span class="finding-tid">${esc(f.technique_id)}</span>
+          <span class="finding-tactic">${esc(f.tactic)}</span>
+          <span class="finding-title">${esc(f.title)}</span>
+        </div>
+        <div class="finding-detail">${esc(f.detail)}</div>
+        ${f.evidence?`<pre class="evidence-pre">${esc(f.evidence.slice(0,400))}</pre>`:''}
+        <div class="rec">💡 ${esc(f.recommendation)}</div>
+      </div>`).join('');
+
+  const obs = (data.key_observations||[]).map(o=>`<li>${esc(o)}</li>`).join('');
+
+  document.getElementById('analysis-main').innerHTML = `
+    <div class="risk-banner risk-${data.risk_level}">
+      <strong>Risk Level: ${(data.risk_level||'').toUpperCase()}</strong><br>
+      <span style="font-size:12px;color:var(--text)">${esc(data.executive_summary||'')}</span>
+    </div>
+
+    <div class="sev-counts">${countBadges}</div>
+
+    ${data.attack_path?`
+      <div class="section-title">Attack Path</div>
+      <div class="attack-path">${esc(data.attack_path)}</div>`:''}
+
+    ${obs?`
+      <div class="section-title">Key Observations</div>
+      <ul class="obs-list">${obs}</ul>`:''}
+
+    <div class="section-title">Findings (${(data.findings||[]).length})</div>
+    <div id="findings-area">${findings||'<div class="empty">No findings</div>'}</div>
+
+  `;
+
+  // Sidebar severity summary (reuse sevColors/counts already declared above)
+  document.getElementById('sev-summary').innerHTML = ['critical','high','medium','low','info'].map(s =>
+    `<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 8px;background:var(--bg3);border-radius:3px;border:1px solid var(--border)">
+      <span style="font-size:11px;color:${sevColors[s]};text-transform:uppercase;font-weight:bold">${s}</span>
+      <span style="font-size:14px;font-weight:bold;color:${counts[s]>0?sevColors[s]:'var(--dim)'}">${counts[s]}</span>
+    </div>`
+  ).join('');
+
+  // Load execution results and append table
+  loadAndRenderResultsTable();
+}
+
+async function loadAndRenderResultsTable() {
+  try {
+    const data = await fetch(`${API}/api/jobs/${currentJobId}/results`).then(r=>r.json());
+    // API returns by_target grouped structure — flatten into single results array
+    const multiTarget = (data.by_target || []).length > 1;
+    const results = (data.by_target || []).flatMap(tgt =>
+      (tgt.results || []).map(r => ({...r, _target_name: tgt.target?.name || ''}))
+    );
+
+    const th = s => `<th style="padding:6px 8px;text-align:left;font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--border)">${s}</th>`;
+
+    const rows = results.map(r => {
+      const icon = r.skipped ? '⏭' : r.success ? '✓' : '✗';
+      const col = r.skipped ? 'var(--dim)' : r.success ? 'var(--green)' : 'var(--red)';
+      const stdoutHtml = r.stdout && r.stdout.trim()
+        ? `<details><summary style="cursor:pointer;font-size:10px;color:var(--dim)">stdout ▶</summary><pre style="background:var(--bg);padding:6px;font-size:10px;color:var(--green);white-space:pre-wrap;max-height:120px;overflow-y:auto;margin-top:4px;border-radius:3px">${esc(r.stdout.trim().slice(0,500))}</pre></details>`
+        : '';
+      const skipHtml = r.skipped && r.skip_reason
+        ? `<div style="font-size:10px;color:var(--dim);margin-top:2px">${esc(r.skip_reason)}</div>` : '';
+      const tgtCell = multiTarget ? `<td style="font-size:10px;color:var(--cyan)">${esc(r._target_name)}</td>` : '';
+      return `<tr>
+        ${tgtCell}
+        <td style="color:var(--cyan);font-size:11px">${esc(r.technique_id)}</td>
+        <td style="font-size:11px">${esc((r.test_name||'').slice(0,55))}${skipHtml}</td>
+        <td style="font-size:10px;color:var(--dim)">${esc(r.tactic)}</td>
+        <td style="color:${col};font-weight:bold">${icon}</td>
+        <td style="font-size:10px;color:var(--dim)">${r.exit_code}</td>
+        <td style="font-size:10px;color:var(--dim)">${r.duration_ms}ms</td>
+        <td>${stdoutHtml}</td>
+      </tr>`;
+    }).join('');
+
+    const tgtHeader = multiTarget ? th('Target') : '';
+    const tbl = `
+    <div class="section-title" style="margin-top:20px">All Execution Results (${results.length})</div>
+    <div style="overflow-x:auto">
+    <table style="width:100%;border-collapse:collapse;font-size:11px">
+      <thead><tr style="background:var(--bg3)">
+        ${tgtHeader}${th('Technique')}${th('Test')}${th('Tactic')}${th('Result')}${th('Exit')}${th('Time')}${th('Output')}
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    </div>`;
+
+    document.getElementById('analysis-main').insertAdjacentHTML('beforeend', tbl);
+  } catch(e) { console.error('Results table load failed', e); }
+}
+
+function openReport() {
+  if (currentJobId) window.open(`${API}/api/jobs/${currentJobId}/report/html`, '_blank');
+}
+function openPDF() {
+  if (!currentJobId) return;
+  const win = window.open(`${API}/api/jobs/${currentJobId}/report/html`, '_blank');
+  if (win) { win.onload = () => { setTimeout(() => win.print(), 500); }; }
+}
+// ── Utils ─────────────────────────────────────────────────────────────────────
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function pad(n) { return String(n).padStart(2,'0'); }
+function toggleKey(id) {
+  const el = document.getElementById(id);
+  if (el) el.type = el.type === 'password' ? 'text' : 'password';
+}
+
+// Init
+init();
+</script>
+</body>
+</html>

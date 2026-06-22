@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(\\(Get-Command python\\).Source; \\(Get-Command pip\\).Source; python -m pip --version)",
+      "PowerShell($py314=\"C:\\\\Users\\\\Student\\\\AppData\\\\Local\\\\Python\\\\pythoncore-3.14-64\\\\python.exe\"; & $py314 --version; & $py314 -c \"import fastapi,uvicorn,litellm,yaml; print\\('all deps OK on 3.14'\\)\" 2>&1 | Select-Object -Last 3)",
+      "PowerShell($py314=\"C:\\\\Users\\\\Student\\\\AppData\\\\Local\\\\Python\\\\pythoncore-3.14-64\\\\python.exe\"; & $py314 -c \"from api.main import app; print\\('app import OK'\\)\" 2>&1 | Select-Object -Last 5)"
+    ]
+  }
+}

@@ -1,0 +1,12 @@
+# Portable runtime — bootstrapped by start.ps1, never commit
+.runtime/
+
+# Python
+__pycache__/
+*.pyc
+
+# Env / secrets
+.env
+
+# Job execution results
+results/
