@@ -10,3 +10,7 @@ __pycache__/
 
 # Job execution results
 results/
+
+# Atomic Red Team files — bootstrapped dynamically
+atomics/
+
