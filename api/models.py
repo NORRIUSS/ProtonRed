@@ -66,6 +66,7 @@ class AnalyzeRequest(BaseModel):
 class JobStatusResponse(BaseModel):
     job_id: str
     status: str
+    engine: str = "native"
     total: int
     completed: int
     succeeded: int

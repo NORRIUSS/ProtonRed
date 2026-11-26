@@ -26,6 +26,7 @@ RULES — read carefully:
    - "prereq_missing" / "skipped": not executed. Never create findings, never count as defended.
    Older result files may lack `outcome`; then fall back to exit_code and stderr.
    If a result has cleanup_status "failed", add a key_observation that test artefacts may remain on that target.
+   cleanup_status "ran" means cleanup was executed but its exit code is unknown (invoke-atomic engine) — do not report it as failed.
 
 4. PRIVILEGE MULTIPLIER — An admin/SYSTEM test success is always one level higher severity than the same test succeeding as a standard user.
 

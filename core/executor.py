@@ -106,7 +106,8 @@ class JobResult:
     timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     # See core/outcome.py. Empty only for results loaded from pre-outcome files.
     outcome: str = ""
-    # ok | failed | none (test has no cleanup) | disabled (job opted out) | "" (test not run)
+    # ok | failed (native) | ran (invoke-atomic: executed, exit code not exposed)
+    # | none (test has no cleanup) | disabled (job opted out) | "" (test not run)
     cleanup_status: str = ""
     cleanup_output: str = ""
 
@@ -557,6 +558,14 @@ def serialize_job_results(job: ExecutionJob) -> dict:
 
     return {
         "job_id": job.job_id,
+        "engine": job.engine,
+        "options": {
+            "run_cleanup": job.run_cleanup,
+            "check_prereqs": job.check_prereqs,
+            "get_prereqs": job.get_prereqs,
+        },
+        "start_time": job.start_time,
+        "end_time": job.end_time,
         "targets": [_target_to_dict(t) for t in job.targets],
         "summary": {
             "target_count": len(job.targets),

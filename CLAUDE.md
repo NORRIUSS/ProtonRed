@@ -307,6 +307,20 @@ Tested local + DC WinRM. Use for demos and regression.
 - [x] Scan WebSockets — `WS /ws/scan` (live progress), `WS /ws/scan-analyze` (streaming AI vuln report)
 - [ ] Parent platform REST integration — pending
 - [ ] Auth/API key for the API itself — not needed until integration
+- [x] Execution correctness (2026-11-27, merged to main): cleanup after every test, ART prereq check, `outcome` classification, per-job WinRM pool, remote timeout, ordered events — `tests/test_execution.py`
+- [x] `invoke-atomic` engine (2026-11-27, PR #2, branch `feat/invoke-atomic-backend`): Red Canary Invoke-AtomicRedTeam as unmodified dependency; integrated in API (`engine`, `/health`), UI (engine selector, cleanup/prereq toggles, Blocked/Error counters, persisted choice), HTML report (engine, blocked count, cleanup warning), SDKs, demo script (`--engine`) — `tests/test_invoke_atomic.py`
+
+## Next Steps (resume here)
+
+1. **Validate `invoke-atomic` on the lab DC** (needs Windows — cannot be done from the Linux dev box):
+   `start.ps1`, then `python tools/compare_engines.py --host 192.168.50.162 --user Administrator --password <...> --domain-joined`.
+   Check outcomes match `native` and the `T1547.001:0` Run key is removed. Fix any diffs, then merge PR #2.
+2. If it holds: set `DEFAULT_ENGINE=invoke-atomic`, then remove the native executor's run path (keep `atomic_engine` YAML parsing for the technique catalog).
+3. Cut scope: remove agent mode (`core/agent.py`, `/api/sessions`, `main.py run`) and `/api/terminal/execute`; move nmap/vuln analysis into its own module.
+4. Refactor `api/main.py` (~1500 lines) into routers + a storage layer (SQLite) so jobs survive restarts.
+5. Security pass (deferred by the user): default `API_HOST` 127.0.0.1, required API key, CORS allowlist, nmap `extra_args` allowlist, `job_id`/`scan_id` UUID validation, per-request provider API keys instead of `os.environ`.
+
+Dev box notes: tests need `pip install -r requirements-dev.txt`, `python tools/fetch_vendor.py`, and pwsh (`PWSH_PATH`) for the invoke-atomic tests.
 
 ---
 

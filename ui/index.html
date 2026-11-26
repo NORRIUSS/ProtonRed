@@ -197,6 +197,7 @@ textarea { resize: vertical; min-height: 60px; }
 .n-red { color: var(--red); }
 .n-yellow { color: var(--yellow); }
 .n-dim { color: var(--dim); }
+.n-cyan { color: var(--cyan); }
 
 /* Analysis panel */
 .analysis-layout { display: grid; grid-template-columns: 1fr 300px; height: 100%; overflow: hidden; }
@@ -489,17 +490,19 @@ textarea { resize: vertical; min-height: 60px; }
         <div class="stat-box"><div class="stat-n n-green" id="s-succ">0</div><div class="stat-l">Succeeded</div></div>
         <div class="stat-box"><div class="stat-n n-red" id="s-fail">0</div><div class="stat-l">Failed</div></div>
         <div class="stat-box"><div class="stat-n n-yellow" id="s-skip">0</div><div class="stat-l">Skipped</div></div>
+        <div class="stat-box" title="Stopped by a security control (AMSI / AV / ACL / AppLocker)"><div class="stat-n n-cyan" id="s-block">0</div><div class="stat-l">Blocked</div></div>
+        <div class="stat-box" title="Tool could not run the test, or it timed out"><div class="stat-n n-dim" id="s-err">0</div><div class="stat-l">Error</div></div>
         <div class="stat-box"><div class="stat-n n-dim" id="s-total">0</div><div class="stat-l">Total</div></div>
       </div>
       <div class="divider"></div>
       <div class="card-title">Run</div>
       <label style="font-size:10px;color:var(--dim)">Engine</label>
-      <select id="engine-select" style="width:100%;margin:2px 0 6px" title="native = ProtonRed executor · invoke-atomic = Red Canary Invoke-AtomicRedTeam">
+      <select id="engine-select" onchange="saveSession()" style="width:100%;margin:2px 0 6px" title="native = ProtonRed executor · invoke-atomic = Red Canary Invoke-AtomicRedTeam">
         <option value="native">native (ProtonRed)</option>
         <option value="invoke-atomic">invoke-atomic (Red Canary)</option>
       </select>
-      <label style="font-size:10px;color:var(--dim);display:block;margin-bottom:2px"><input type="checkbox" id="opt-cleanup" checked> run cleanup after each test</label>
-      <label style="font-size:10px;color:var(--dim);display:block;margin-bottom:6px"><input type="checkbox" id="opt-prereqs" checked> check prerequisites</label>
+      <label style="font-size:10px;color:var(--dim);display:block;margin-bottom:2px"><input type="checkbox" id="opt-cleanup" checked onchange="saveSession()"> run cleanup after each test</label>
+      <label style="font-size:10px;color:var(--dim);display:block;margin-bottom:6px"><input type="checkbox" id="opt-prereqs" checked onchange="saveSession()"> check prerequisites</label>
       <button class="btn btn-primary btn-full" id="run-btn" onclick="runExecution()">▶ Run Tests</button>
       <button class="btn btn-full btn-sm" id="reset-btn" onclick="resetExecution()" style="display:none;margin-top:6px;background:rgba(255,71,87,.15);border:1px solid var(--red);color:var(--red)">⟳ Reset / Cancel</button>
       <div style="margin-top:8px">
@@ -625,7 +628,7 @@ let activeTactic = null;
 const selections = new Map();
 let currentJobId = null;
 let execRunning = false;
-let execStats = {succ:0, fail:0, skip:0, total:0};
+let execStats = {succ:0, fail:0, skip:0, block:0, err:0, total:0};
 let execWs = null;   // active execution WebSocket — kept for reset/cancel
 // ── Targets state ───────────────────────────────────────────────────────────
 let activeStep = 1;
@@ -723,6 +726,8 @@ function getSettingsProviderConfig() {
 }
 
 // ── Session persistence ───────────────────────────────────────────────────────
+let sessionEngine = '';   // engine restored from localStorage, applied once /health says it is available
+
 function saveSession() {
   try {
     const scanTarget = document.getElementById('scan-target')?.value || '';
@@ -735,6 +740,9 @@ function saveSession() {
       activeStep: activeStep,
       scanTarget: scanTarget,
       scanProfile: scanProfile,
+      engine: document.getElementById('engine-select')?.value || '',
+      runCleanup: document.getElementById('opt-cleanup')?.checked ?? true,
+      checkPrereqs: document.getElementById('opt-prereqs')?.checked ?? true,
     }));
   } catch(_) {}
 }
@@ -771,6 +779,9 @@ function restoreSession() {
     if (s.scanProfile && document.getElementById('scan-profile')) {
       document.getElementById('scan-profile').value = s.scanProfile;
     }
+    if (s.engine) sessionEngine = s.engine;
+    if (typeof s.runCleanup === 'boolean') document.getElementById('opt-cleanup').checked = s.runCleanup;
+    if (typeof s.checkPrereqs === 'boolean') document.getElementById('opt-prereqs').checked = s.checkPrereqs;
     if (s.activeStep) {
       goStep(s.activeStep);
     } else {
@@ -810,10 +821,27 @@ async function loadHealth() {
     document.getElementById('sdot').className = 'dot on';
     document.getElementById('stxt').textContent = 'Online';
     document.getElementById('hdr-tech').textContent = `${d.techniques_loaded} techniques`;
+    applyEngineHealth(d.engines);
   } catch {
     document.getElementById('sdot').className = 'dot';
     document.getElementById('stxt').textContent = 'Offline';
   }
+}
+
+// Engine selector: disable engines the server cannot run, default to the
+// server's DEFAULT_ENGINE unless the user picked one before.
+function applyEngineHealth(engines) {
+  const sel = document.getElementById('engine-select');
+  if (!sel || !engines) return;
+  for (const opt of sel.options) {
+    const info = engines[opt.value];
+    const ok = !info || info.available !== false;
+    opt.disabled = !ok;
+    opt.title = ok ? '' : `Unavailable: ${(info.missing_modules || []).join(', ')} ${info.hint || ''}`.trim();
+  }
+  const saved = sessionEngine;
+  const wanted = saved && engines[saved] && engines[saved].available !== false ? saved : (engines.default || 'native');
+  if ([...sel.options].some(o => o.value === wanted && !o.disabled)) sel.value = wanted;
 }
 
 async function loadTactics() {
@@ -1276,12 +1304,16 @@ function handleExecEvent(ev, total) {
   else if (type === 'test_done') {
     const ok = data.success;
     execStats[ok?'succ':'fail']++;
+    if (data.outcome === 'blocked') execStats.block++;
+    if (data.outcome === 'error' || data.outcome === 'timeout') execStats.err++;
     updateStatBoxes();
     const prog = data.progress || '';
     const [done, tot] = prog.split('/').map(Number);
     updateProgress(done, tot || total);
     const label = data.outcome ? data.outcome.toUpperCase().replace('_',' ') : (ok?'OK':'FAIL');
-    const cleanupNote = data.cleanup_status === 'failed' ? ' · cleanup FAILED' : '';
+    const cleanupNote = data.cleanup_status === 'failed' ? ' · cleanup FAILED'
+      : data.cleanup_status === 'ok' ? ' · cleaned up'
+      : data.cleanup_status === 'ran' ? ' · cleanup ran' : '';
     addLog(ok?'b-done-ok':'b-done-fail', esc(label),
       `${tg}${data.technique_id} exit:${data.exit_code} ${data.duration_ms}ms${cleanupNote}`,
       data.stdout_preview);
@@ -1292,7 +1324,8 @@ function handleExecEvent(ev, total) {
     const prog = data.progress || '';
     const [done, tot] = prog.split('/').map(Number);
     if (done) updateProgress(done, tot || total);
-    addLog('b-skip', 'SKIP', `${tg}${data.technique_id} — ${data.reason}`);
+    const skipLabel = data.outcome === 'prereq_missing' ? 'PREREQ' : 'SKIP';
+    addLog('b-skip', skipLabel, `${tg}${data.technique_id} — ${data.reason}`);
   }
   else if (type === 'execution_complete') {
     document.getElementById('current-test').textContent = '—';
@@ -1400,7 +1433,7 @@ function clearExecLog() {
 }
 
 function resetExecStats(total) {
-  execStats = {succ:0, fail:0, skip:0, total};
+  execStats = {succ:0, fail:0, skip:0, block:0, err:0, total};
   updateStatBoxes();
   updateProgress(0, total);
 }
@@ -1409,6 +1442,8 @@ function updateStatBoxes() {
   document.getElementById('s-succ').textContent = execStats.succ;
   document.getElementById('s-fail').textContent = execStats.fail;
   document.getElementById('s-skip').textContent = execStats.skip;
+  document.getElementById('s-block').textContent = execStats.block;
+  document.getElementById('s-err').textContent = execStats.err;
   document.getElementById('s-total').textContent = execStats.total;
 }
 
@@ -1745,7 +1780,9 @@ async function loadAndRenderResultsTable() {
       const outcomeIcons = {success:'✓', partial:'◐', failed:'✗', blocked:'🛡', error:'⚠', timeout:'⏱', prereq_missing:'⏭', skipped:'⏭'};
       const icon = (outcomeIcons[r.outcome] || (r.skipped ? '⏭' : r.success ? '✓' : '✗'))
         + (r.outcome ? ` <span style="font-size:9px;font-weight:normal">${esc(r.outcome)}</span>` : '')
-        + (r.cleanup_status === 'failed' ? ' <span style="font-size:9px;color:var(--red)" title="cleanup failed — artefacts may remain">cleanup✗</span>' : '');
+        + (r.cleanup_status === 'failed' ? ' <span style="font-size:9px;color:var(--red)" title="cleanup failed — artefacts may remain">cleanup✗</span>'
+          : r.cleanup_status === 'ok' ? ' <span style="font-size:9px;color:var(--dim)" title="cleanup succeeded">cleaned</span>'
+          : r.cleanup_status === 'ran' ? ' <span style="font-size:9px;color:var(--dim)" title="cleanup executed (exit code not reported by Invoke-AtomicTest)">cleanup ran</span>' : '');
       const col = r.skipped ? 'var(--dim)' : r.success ? 'var(--green)' : 'var(--red)';
       const stdoutHtml = r.stdout && r.stdout.trim()
         ? `<details><summary style="cursor:pointer;font-size:10px;color:var(--dim)">stdout ▶</summary><pre style="background:var(--bg);padding:6px;font-size:10px;color:var(--green);white-space:pre-wrap;max-height:120px;overflow-y:auto;margin-top:4px;border-radius:3px">${esc(r.stdout.trim().slice(0,500))}</pre></details>`
@@ -1767,7 +1804,8 @@ async function loadAndRenderResultsTable() {
 
     const tgtHeader = multiTarget ? th('Target') : '';
     const tbl = `
-    <div class="section-title" style="margin-top:20px">All Execution Results (${results.length})</div>
+    <div class="section-title" style="margin-top:20px">All Execution Results (${results.length})
+      <span style="font-size:10px;color:var(--dim);font-weight:normal;margin-left:8px">engine: ${esc(data.engine || 'native')}</span></div>
     <div style="overflow-x:auto">
     <table style="width:100%;border-collapse:collapse;font-size:11px">
       <thead><tr style="background:var(--bg3)">

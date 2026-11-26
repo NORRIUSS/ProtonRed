@@ -329,6 +329,7 @@ async def get_job(job_id: str):
             return JobStatusResponse(
                 job_id=job_id,
                 status="done",
+                engine=data.get("engine", "native"),
                 total=sum_data.get("total_tests", 0),
                 completed=sum_data.get("total_tests", 0),
                 succeeded=sum_data.get("succeeded", 0),
@@ -342,6 +343,7 @@ async def get_job(job_id: str):
     return JobStatusResponse(
         job_id=job.job_id,
         status=job.status,
+        engine=job.engine,
         total=job.total,
         completed=job.completed,
         succeeded=sum(1 for r in job.results if r.success),
@@ -460,6 +462,7 @@ async def get_report_html(job_id: str):
             end_time=raw_job.get("end_time"),
             total=raw_job.get("summary", {}).get("total_tests", 0),
             completed=raw_job.get("summary", {}).get("total_tests", 0),
+            engine=raw_job.get("engine", "native"),
         )
 
     if not report:
@@ -1330,6 +1333,11 @@ def _build_html_report(job: ExecutionJob, report: Optional[AnalysisReport]) -> s
 {"<h2>Attack Path</h2><div class='attack-path'>"+he(report.attack_path)+"</div>" if report.attack_path else ""}"""
 
     gen_time = __import__("datetime").datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+    engine_label = {"native": "ProtonRed native", "invoke-atomic": "Invoke-AtomicRedTeam"}.get(job.engine, job.engine)
+    cleanup_left = sum(1 for r in job.results if r.cleanup_status == "failed")
+    blocked = sum(1 for r in job.results if r.outcome == "blocked")
+    # From disk the original selections are gone; count distinct tests instead.
+    n_tests = len(job.selections) or len({(r.technique_id, r.test_index) for r in job.results})
     succ = sum(1 for r in job.results if r.success)
     fail = sum(1 for r in job.results if not r.success and not r.skipped)
     skip = sum(1 for r in job.results if r.skipped)
@@ -1437,11 +1445,13 @@ def _build_html_report(job: ExecutionJob, report: Optional[AnalysisReport]) -> s
 
 <div class="meta-grid">
   <div class="meta-box"><div class="meta-lbl">Scope</div><div class="meta-val">{he(target_label)}</div></div>
-  <div class="meta-box"><div class="meta-lbl">Techniques</div><div class="meta-val">{len(job.selections)} × {len(targets)} tgt</div></div>
+  <div class="meta-box"><div class="meta-lbl">Techniques</div><div class="meta-val">{n_tests} × {len(targets)} tgt</div></div>
   <div class="meta-box"><div class="meta-lbl">Job ID</div><div class="meta-val" style="font-size:10px">{job.job_id}</div></div>
   <div class="meta-box"><div class="meta-lbl">Generated</div><div class="meta-val" style="font-size:10px">{gen_time}</div></div>
-  <div class="meta-box" style="grid-column:span 4"><div class="meta-lbl">Results</div><div class="meta-val">✓{succ} succeeded · ✗{fail} failed · ⏭{skip} skipped (of {job.total})</div></div>
+  <div class="meta-box"><div class="meta-lbl">Engine</div><div class="meta-val" style="font-size:10px">{he(engine_label)}</div></div>
+  <div class="meta-box" style="grid-column:span 3"><div class="meta-lbl">Results</div><div class="meta-val">✓{succ} succeeded · ✗{fail} failed (🛡{blocked} blocked) · ⏭{skip} skipped (of {job.total})</div></div>
 </div>
+{f'<div class="risk-box" style="border-color:#ff8800"><div class="risk-label" style="color:#ff8800">⚠ CLEANUP FAILED FOR {cleanup_left} TEST(S)</div><p class="exec-sum">Test artefacts may remain on the target. See results marked "cleanup ✗".</p></div>' if cleanup_left else ""}
 
 <h2>Targets ({len(targets)})</h2>
 {targets_html}
