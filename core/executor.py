@@ -11,6 +11,7 @@ Each target carries its own OS, privilege (admin/standard user), and
 domain-join state, which drive per-target skip decisions.
 """
 import asyncio
+import inspect
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -19,6 +20,7 @@ from typing import AsyncGenerator, Callable, Optional
 from core.atomic_engine import AtomicEngine, ExecutionResult
 from core.tactic_map import get_tactic_for_technique, DOMAIN_REQUIRED_TECHNIQUES
 from core.winrm_runner import RemoteConnection, clear_client_cache
+from core import outcome as oc
 from config import settings
 
 
@@ -54,7 +56,7 @@ class Target:
     def is_remote(self) -> bool:
         return self.connection == "remote"
 
-    def remote_connection(self) -> Optional[RemoteConnection]:
+    def remote_connection(self, pool: str = "") -> Optional[RemoteConnection]:
         if not self.is_remote:
             return None
         return RemoteConnection(
@@ -64,6 +66,7 @@ class Target:
             transport=self.winrm_transport,
             port=self.winrm_port,
             ssl=self.winrm_ssl,
+            pool=pool,
         )
 
 
@@ -96,6 +99,11 @@ class JobResult:
     skipped: bool = False
     skip_reason: str = ""
     timestamp: str = field(default_factory=lambda: datetime.utcnow().isoformat())
+    # See core/outcome.py. Empty only for results loaded from pre-outcome files.
+    outcome: str = ""
+    # ok | failed | none (test has no cleanup) | disabled (job opted out) | "" (test not run)
+    cleanup_status: str = ""
+    cleanup_output: str = ""
 
 
 @dataclass
@@ -110,6 +118,13 @@ class ExecutionJob:
     total: int = 0
     completed: int = 0
     error: Optional[str] = None
+    # Run each test's cleanup_command after it, on the same target. ART tests
+    # in persistence/defense-evasion leave real changes behind otherwise.
+    run_cleanup: bool = True
+    # Evaluate ART `dependencies` before running a test.
+    check_prereqs: bool = True
+    # Run `get_prereq_command` for unmet dependencies (usually downloads tools).
+    get_prereqs: bool = False
 
 
 @dataclass
@@ -124,9 +139,13 @@ class DeterministicExecutor:
         self.engine = engine
         self.on_event = on_event
 
-    def _emit(self, event: ExecutorEvent):
+    async def _emit(self, event: ExecutorEvent):
+        """Deliver an event and wait for it, so consumers see events in order
+        and the last test_done arrives before the caller's completion message."""
         if self.on_event:
-            self.on_event(event)
+            res = self.on_event(event)
+            if inspect.isawaitable(res):
+                await res
 
     # Download cradle patterns — commands with these fetch from internet at runtime.
     _DOWNLOAD_PATTERNS = (
@@ -191,12 +210,54 @@ class DeterministicExecutor:
 
         return False, ""
 
+    async def _cleanup(self, sel: TestSelection, remote: Optional[RemoteConnection]) -> tuple[str, str]:
+        try:
+            res = await self.engine.cleanup_atomic(
+                sel.technique_id, sel.test_index, sel.arg_overrides, remote,
+                timeout=settings.AGENT_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            return "failed", f"Cleanup raised: {exc!r}"
+        detail = "\n".join(x for x in (res.get("output", ""), res.get("error", "")) if x)
+        return res["status"], self._truncate_middle(detail, 2000)
+
+    async def _record_not_run(self, job: ExecutionJob, sel: TestSelection, target: Target,
+                        test_name: str, outcome: str, reason: str) -> None:
+        """Record a test that was never executed (filtered or prereqs unmet)."""
+        job.results.append(JobResult(
+            technique_id=sel.technique_id,
+            test_index=sel.test_index,
+            test_name=test_name,
+            test_guid="",
+            tactic=get_tactic_for_technique(sel.technique_id),
+            success=False,
+            exit_code=-1,
+            stdout="",
+            stderr="",
+            command_executed="",
+            duration_ms=0,
+            target_id=target.target_id,
+            target_name=target.name,
+            skipped=True,
+            skip_reason=reason,
+            outcome=outcome,
+        ))
+        job.completed += 1
+        await self._emit(ExecutorEvent(type="skipped", data={
+            "technique_id": sel.technique_id,
+            "target_id": target.target_id,
+            "target_name": target.name,
+            "reason": reason,
+            "outcome": outcome,
+            "progress": f"{job.completed}/{job.total}",
+        }))
+
     async def run(self, job: ExecutionJob) -> ExecutionJob:
         job.status = "running"
         job.start_time = datetime.utcnow().isoformat()
         job.total = len(job.targets) * len(job.selections)
 
-        self._emit(ExecutorEvent(type="started", data={
+        await self._emit(ExecutorEvent(type="started", data={
             "job_id": job.job_id,
             "total": job.total,
             "targets": [
@@ -207,13 +268,13 @@ class DeterministicExecutor:
         }))
 
         for target in job.targets:
-            self._emit(ExecutorEvent(type="target_start", data={
+            await self._emit(ExecutorEvent(type="target_start", data={
                 "target_id": target.target_id,
                 "name": target.name,
                 "connection": target.connection,
                 "host": target.host if target.is_remote else "local",
             }))
-            remote = target.remote_connection()
+            remote = target.remote_connection(pool=job.job_id)
 
             for sel in job.selections:
                 skip, reason = self._should_skip(sel.technique_id, sel.test_index, target)
@@ -223,7 +284,7 @@ class DeterministicExecutor:
                 if technique and sel.test_index < len(technique.atomic_tests):
                     test_name = technique.atomic_tests[sel.test_index].name
 
-                self._emit(ExecutorEvent(type="test_start", data={
+                await self._emit(ExecutorEvent(type="test_start", data={
                     "technique_id": sel.technique_id,
                     "test_index": sel.test_index,
                     "test_name": test_name,
@@ -234,33 +295,19 @@ class DeterministicExecutor:
                 }))
 
                 if skip:
-                    result = JobResult(
-                        technique_id=sel.technique_id,
-                        test_index=sel.test_index,
-                        test_name=test_name,
-                        test_guid="",
-                        tactic=get_tactic_for_technique(sel.technique_id),
-                        success=False,
-                        exit_code=-1,
-                        stdout="",
-                        stderr="",
-                        command_executed="",
-                        duration_ms=0,
-                        target_id=target.target_id,
-                        target_name=target.name,
-                        skipped=True,
-                        skip_reason=reason,
-                    )
-                    job.results.append(result)
-                    job.completed += 1
-                    self._emit(ExecutorEvent(type="skipped", data={
-                        "technique_id": sel.technique_id,
-                        "target_id": target.target_id,
-                        "target_name": target.name,
-                        "reason": reason,
-                        "progress": f"{job.completed}/{job.total}",
-                    }))
+                    await self._record_not_run(job, sel, target, test_name, oc.SKIPPED, reason)
                     continue
+
+                technique_test = technique.atomic_tests[sel.test_index]
+                if job.check_prereqs and technique_test.dependencies:
+                    met, detail = await self.engine.check_prereqs(
+                        technique_test, sel.arg_overrides, remote,
+                        get_prereqs=job.get_prereqs, timeout=settings.AGENT_TIMEOUT_SECONDS,
+                    )
+                    if not met:
+                        await self._record_not_run(job, sel, target, test_name, oc.PREREQ_MISSING,
+                                             f"Prerequisites not met: {detail}")
+                        continue
 
                 t_start = asyncio.get_running_loop().time()
 
@@ -272,6 +319,15 @@ class DeterministicExecutor:
                         timeout=settings.AGENT_TIMEOUT_SECONDS,
                         remote=remote,
                     )
+                except asyncio.CancelledError:
+                    # Cancelled mid-test: the test may have half-applied its
+                    # changes, so still try to undo them before stopping.
+                    if job.run_cleanup:
+                        try:
+                            await asyncio.wait_for(self._cleanup(sel, remote), timeout=60)
+                        except BaseException:
+                            pass
+                    raise
                 except Exception as exc:
                     exec_result = ExecutionResult(
                         technique_id=sel.technique_id,
@@ -283,9 +339,14 @@ class DeterministicExecutor:
                         exit_code=-1,
                         platform=target.os_platform,
                         command_executed="",
+                        outcome=oc.ERROR,
                     )
 
                 duration_ms = int((asyncio.get_running_loop().time() - t_start) * 1000)
+
+                cleanup_status, cleanup_output = "disabled", ""
+                if job.run_cleanup:
+                    cleanup_status, cleanup_output = await self._cleanup(sel, remote)
 
                 result = JobResult(
                     technique_id=sel.technique_id,
@@ -301,26 +362,31 @@ class DeterministicExecutor:
                     duration_ms=duration_ms,
                     target_id=target.target_id,
                     target_name=target.name,
+                    outcome=exec_result.outcome,
+                    cleanup_status=cleanup_status,
+                    cleanup_output=cleanup_output,
                 )
                 job.results.append(result)
                 job.completed += 1
 
-                self._emit(ExecutorEvent(type="test_done", data={
+                await self._emit(ExecutorEvent(type="test_done", data={
                     "technique_id": sel.technique_id,
                     "test_name": result.test_name,
                     "target_id": target.target_id,
                     "target_name": target.name,
                     "success": result.success,
+                    "outcome": result.outcome,
                     "exit_code": result.exit_code,
                     "duration_ms": duration_ms,
+                    "cleanup_status": cleanup_status,
                     "progress": f"{job.completed}/{job.total}",
                     "stdout_preview": result.stdout[:300],
                 }))
 
-        clear_client_cache()
+        clear_client_cache(job.job_id)
         job.status = "done"
         job.end_time = datetime.utcnow().isoformat()
-        self._emit(ExecutorEvent(type="job_done", data={
+        await self._emit(ExecutorEvent(type="job_done", data={
             "job_id": job.job_id,
             "total": job.total,
             "succeeded": sum(1 for r in job.results if r.success),
@@ -343,6 +409,14 @@ def _target_to_dict(t: Target) -> dict:
     }
 
 
+def _outcome_counts(results: list[JobResult]) -> dict:
+    counts = {o: 0 for o in oc.ALL_OUTCOMES}
+    for r in results:
+        if r.outcome in counts:
+            counts[r.outcome] += 1
+    return counts
+
+
 def serialize_job_results(job: ExecutionJob) -> dict:
     """Serialize raw TTP execution results — no AI, pure subprocess output."""
     per_target = []
@@ -355,17 +429,25 @@ def serialize_job_results(job: ExecutionJob) -> dict:
                 "succeeded": sum(1 for r in t_results if r.success),
                 "failed": sum(1 for r in t_results if not r.success and not r.skipped),
                 "skipped": sum(1 for r in t_results if r.skipped),
-                "tactics_tested": list(set(r.tactic for r in t_results if not r.skipped)),
+                "tactics_tested": sorted(set(r.tactic for r in t_results if not r.skipped)),
+                "outcomes": _outcome_counts(t_results),
             },
             "results": [
                 {
                     "technique_id": r.technique_id,
+                    "test_index": r.test_index,
+                    "test_guid": r.test_guid,
                     "test_name": r.test_name,
                     "tactic": r.tactic,
+                    "target_id": r.target_id,
+                    "target_name": r.target_name,
+                    "outcome": r.outcome,
                     "success": r.success,
                     "exit_code": r.exit_code,
                     "skipped": r.skipped,
                     "skip_reason": r.skip_reason,
+                    "cleanup_status": r.cleanup_status,
+                    "cleanup_output": r.cleanup_output,
                     "stdout": r.stdout,
                     "stderr": r.stderr,
                     "command_executed": r.command_executed,
@@ -385,6 +467,8 @@ def serialize_job_results(job: ExecutionJob) -> dict:
             "succeeded": sum(1 for r in job.results if r.success),
             "failed": sum(1 for r in job.results if not r.success and not r.skipped),
             "skipped": sum(1 for r in job.results if r.skipped),
+            "outcomes": _outcome_counts(job.results),
+            "cleanup_failed": sum(1 for r in job.results if r.cleanup_status == "failed"),
         },
         "by_target": per_target,
     }

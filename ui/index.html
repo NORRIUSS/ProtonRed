@@ -1263,8 +1263,10 @@ function handleExecEvent(ev, total) {
     const prog = data.progress || '';
     const [done, tot] = prog.split('/').map(Number);
     updateProgress(done, tot || total);
-    addLog(ok?'b-done-ok':'b-done-fail', ok?'OK':'FAIL',
-      `${tg}${data.technique_id} exit:${data.exit_code} ${data.duration_ms}ms`,
+    const label = data.outcome ? data.outcome.toUpperCase().replace('_',' ') : (ok?'OK':'FAIL');
+    const cleanupNote = data.cleanup_status === 'failed' ? ' · cleanup FAILED' : '';
+    addLog(ok?'b-done-ok':'b-done-fail', esc(label),
+      `${tg}${data.technique_id} exit:${data.exit_code} ${data.duration_ms}ms${cleanupNote}`,
       data.stdout_preview);
   }
   else if (type === 'skipped') {
@@ -1723,7 +1725,10 @@ async function loadAndRenderResultsTable() {
     const th = s => `<th style="padding:6px 8px;text-align:left;font-size:9px;color:var(--dim);text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--border)">${s}</th>`;
 
     const rows = results.map(r => {
-      const icon = r.skipped ? '⏭' : r.success ? '✓' : '✗';
+      const outcomeIcons = {success:'✓', partial:'◐', failed:'✗', blocked:'🛡', error:'⚠', timeout:'⏱', prereq_missing:'⏭', skipped:'⏭'};
+      const icon = (outcomeIcons[r.outcome] || (r.skipped ? '⏭' : r.success ? '✓' : '✗'))
+        + (r.outcome ? ` <span style="font-size:9px;font-weight:normal">${esc(r.outcome)}</span>` : '')
+        + (r.cleanup_status === 'failed' ? ' <span style="font-size:9px;color:var(--red)" title="cleanup failed — artefacts may remain">cleanup✗</span>' : '');
       const col = r.skipped ? 'var(--dim)' : r.success ? 'var(--green)' : 'var(--red)';
       const stdoutHtml = r.stdout && r.stdout.trim()
         ? `<details><summary style="cursor:pointer;font-size:10px;color:var(--dim)">stdout ▶</summary><pre style="background:var(--bg);padding:6px;font-size:10px;color:var(--green);white-space:pre-wrap;max-height:120px;overflow-y:auto;margin-top:4px;border-radius:3px">${esc(r.stdout.trim().slice(0,500))}</pre></details>`

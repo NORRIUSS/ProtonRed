@@ -17,7 +17,15 @@ RULES — read carefully:
 
 2. SEVERITY IS DEFINITIVE — Pick one severity and defend it. Do not hedge. If LSASS memory dumped successfully → CRITICAL. If whoami shows SYSTEM → HIGH. If net user listed domain accounts → MEDIUM. Base severity on actual attacker impact given the target's privilege level.
 
-3. ONLY SUCCESSFUL TESTS GET FINDINGS — Unless a failed test's error output itself reveals information (e.g., "Access denied" reveals the path exists). Skipped tests → never create findings.
+3. USE THE `outcome` FIELD — every result carries one, decided deterministically before you see it:
+   - "success": the technique ran. Findings come from these.
+   - "partial": non-zero exit but output was produced (e.g. `net user /domain` exits 1 on a DC yet lists every user). Judge it by stdout; it can support a finding.
+   - "blocked": a security control (AMSI, Defender, ACL, AppLocker/WDAC) stopped it. Not a vulnerability. Mention effective controls in key_observations, citing the stderr line.
+   - "failed": the technique did not work, no control identified. No finding unless the error output itself leaks information.
+   - "error" / "timeout": the tool could not run the test. Says NOTHING about the target's defences; never present it as a control working or failing.
+   - "prereq_missing" / "skipped": not executed. Never create findings, never count as defended.
+   Older result files may lack `outcome`; then fall back to exit_code and stderr.
+   If a result has cleanup_status "failed", add a key_observation that test artefacts may remain on that target.
 
 4. PRIVILEGE MULTIPLIER — An admin/SYSTEM test success is always one level higher severity than the same test succeeding as a standard user.
 

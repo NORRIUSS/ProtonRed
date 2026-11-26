@@ -14,6 +14,7 @@ from typing import Optional
 import yaml
 
 from config import settings
+from core.outcome import classify, SUCCESS
 
 
 @dataclass
@@ -63,6 +64,7 @@ class ExecutionResult:
     exit_code: int
     platform: str
     command_executed: str
+    outcome: str = ""
 
 
 class AtomicEngine:
@@ -179,11 +181,104 @@ class AtomicEngine:
                     break
         return results
 
-    def _substitute_args(self, command: str, input_args: dict[str, InputArgument], overrides: dict[str, str]) -> str:
+    def _substitute_args(
+        self,
+        command: str,
+        input_args: dict[str, InputArgument],
+        overrides: dict[str, str],
+        remote: bool = False,
+    ) -> str:
+        """Fill #{arg} placeholders the way Invoke-AtomicTest does.
+
+        ART defaults reference files shipped with the atomics as
+        `PathToAtomicsFolder\\T1234\\bin\\...`. Locally that resolves to our
+        atomics checkout. On a remote target those files do not exist, so the
+        placeholder is left as-is and the test will fail visibly instead of
+        pointing at a path on this machine.
+        """
+        if not command:
+            return ""
         for arg_name, arg in input_args.items():
             value = overrides.get(arg_name, arg.default)
+            value = "" if value is None else str(value)
+            if not remote:
+                value = self._resolve_atomics_folder(value)
             command = command.replace(f"#{{{arg_name}}}", value)
+        if not remote:
+            command = self._resolve_atomics_folder(command)
         return command
+
+    def _resolve_atomics_folder(self, text: str) -> str:
+        if "PathToAtomicsFolder" not in text:
+            return text
+        root = str(self.atomics_path.resolve())
+        return text.replace("$PathToAtomicsFolder", root).replace("PathToAtomicsFolder", root)
+
+    async def run_on_target(
+        self,
+        command: str,
+        executor_name: str,
+        timeout: int,
+        remote: Optional["object"] = None,
+    ) -> dict:
+        """Run one command on the job's target, local subprocess or WinRM.
+
+        Returns {"stdout", "stderr", "exit_code", "timed_out"}.
+        """
+        if remote is not None:
+            from core.winrm_runner import run_remote
+            result = await run_remote(conn=remote, command=command, executor_name=executor_name, timeout=timeout)
+        else:
+            result = await self._run_command(command=command, executor_name=executor_name, timeout=timeout)
+        result.setdefault("timed_out", False)
+        return result
+
+    async def check_prereqs(
+        self,
+        test: "AtomicTest",
+        arg_overrides: Optional[dict] = None,
+        remote: Optional["object"] = None,
+        get_prereqs: bool = False,
+        timeout: int = 60,
+    ) -> tuple[bool, str]:
+        """Evaluate ART `dependencies` on the target.
+
+        Each dependency has a `prereq_command` (exit 0 = met) and a
+        `get_prereq_command` that installs it. Fetching is opt-in because it
+        usually downloads tooling from the internet onto the target.
+
+        Returns (all_met, human-readable detail of the first unmet dependency).
+        """
+        if not test.dependencies:
+            return True, ""
+        overrides = arg_overrides or {}
+        is_remote = remote is not None
+        dep_exec = test.dependency_executor_name or test.executor.name
+
+        for dep in test.dependencies:
+            if not isinstance(dep, dict):
+                continue
+            desc = (dep.get("description") or "").strip()
+            check_cmd = self._substitute_args(dep.get("prereq_command", ""), test.input_arguments, overrides, is_remote)
+            if not check_cmd.strip():
+                continue
+
+            res = await self.run_on_target(check_cmd, dep_exec, timeout, remote)
+            if res["exit_code"] == 0 and not res["timed_out"]:
+                continue
+
+            if get_prereqs:
+                get_cmd = self._substitute_args(dep.get("get_prereq_command", ""), test.input_arguments, overrides, is_remote)
+                if get_cmd.strip():
+                    await self.run_on_target(get_cmd, dep_exec, timeout, remote)
+                    res = await self.run_on_target(check_cmd, dep_exec, timeout, remote)
+                    if res["exit_code"] == 0 and not res["timed_out"]:
+                        continue
+
+            reason = "timed out" if res["timed_out"] else f"exit {res['exit_code']}"
+            return False, f"{desc or 'Prerequisite'} ({reason})"
+
+        return True, ""
 
     async def execute_atomic(
         self,
@@ -222,59 +317,61 @@ class AtomicEngine:
 
         test = technique.atomic_tests[test_index]
         overrides = arg_overrides or {}
-        command = self._substitute_args(test.executor.command, test.input_arguments, overrides)
+        command = self._substitute_args(test.executor.command, test.input_arguments, overrides, remote is not None)
 
         current_platform = platform.system().lower()
-        if current_platform == "windows":
-            current_platform = "windows"
-        elif current_platform == "darwin":
+        if current_platform == "darwin":
             current_platform = "macos"
-
         if remote is not None:
-            # Remote target — run the test on the remote host via WinRM.
-            from core.winrm_runner import run_remote
-            result = await run_remote(
-                conn=remote,
-                command=command,
-                executor_name=test.executor.name,
-                timeout=timeout,
-            )
             current_platform = f"windows (remote {remote.host})"
-        else:
-            result = await self._run_command(
-                command=command,
-                executor_name=test.executor.name,
-                timeout=timeout,
-            )
+
+        result = await self.run_on_target(command, test.executor.name, timeout, remote)
+        outcome = classify(result["exit_code"], result["stdout"], result["stderr"], result["timed_out"])
 
         return ExecutionResult(
             technique_id=technique_id,
             test_name=test.name,
             test_guid=test.guid,
-            success=result["exit_code"] == 0,
+            success=outcome == SUCCESS,
             stdout=result["stdout"],
             stderr=result["stderr"],
             exit_code=result["exit_code"],
             platform=current_platform,
             command_executed=command,
+            outcome=outcome,
         )
 
-    async def cleanup_atomic(self, technique_id: str, test_index: int = 0, timeout: int = 30) -> dict:
+    async def cleanup_atomic(
+        self,
+        technique_id: str,
+        test_index: int = 0,
+        arg_overrides: Optional[dict] = None,
+        remote: Optional["object"] = None,
+        timeout: int = 60,
+    ) -> dict:
+        """Run the test's cleanup_command on the same target the test ran on.
+
+        Returns {"status": "ok"|"failed"|"none", "exit_code", "output", "error"}.
+        """
         technique = self.get_technique(technique_id)
         if not technique or test_index >= len(technique.atomic_tests):
-            return {"success": False, "error": "Not found"}
+            return {"status": "failed", "exit_code": -1, "output": "", "error": "Technique/test not found"}
 
         test = technique.atomic_tests[test_index]
-        if not test.executor.cleanup_command:
-            return {"success": True, "output": "No cleanup needed"}
+        if not (test.executor.cleanup_command or "").strip():
+            return {"status": "none", "exit_code": 0, "output": "", "error": ""}
 
-        result = await self._run_command(
-            command=test.executor.cleanup_command,
-            executor_name=test.executor.name,
-            timeout=timeout,
+        command = self._substitute_args(
+            test.executor.cleanup_command, test.input_arguments, arg_overrides or {}, remote is not None
         )
-        return {"success": result["exit_code"] == 0, "output": result["stdout"], "error": result["stderr"]}
-
+        result = await self.run_on_target(command, test.executor.name, timeout, remote)
+        ok = result["exit_code"] == 0 and not result["timed_out"]
+        return {
+            "status": "ok" if ok else "failed",
+            "exit_code": result["exit_code"],
+            "output": result["stdout"],
+            "error": result["stderr"],
+        }
     async def _run_command(self, command: str, executor_name: str, timeout: int) -> dict:
         if executor_name == "manual":
             return {"stdout": "[Manual execution required]", "stderr": "", "exit_code": 0}
@@ -338,7 +435,7 @@ class AtomicEngine:
                     await proc.wait()
                 except Exception:
                     pass
-            return {"stdout": "", "stderr": f"Execution timed out after {timeout}s", "exit_code": -1}
+            return {"stdout": "", "stderr": f"Execution timed out after {timeout}s", "exit_code": -1, "timed_out": True}
         except asyncio.CancelledError:
             if proc is not None:
                 try:

@@ -279,6 +279,9 @@ async def create_job(req: StartJobRequest):
         targets=targets,
         selections=selections,
         total=len(targets) * len(selections),
+        run_cleanup=req.run_cleanup,
+        check_prereqs=req.check_prereqs,
+        get_prereqs=req.get_prereqs,
     )
     _jobs[job.job_id] = job
     return {"job_id": job.job_id, "total": job.total, "target_count": len(targets)}
@@ -413,6 +416,7 @@ async def get_report_html(job_id: str):
         # Reconstruct results
         results_list = []
         for tg_data in raw_job.get("by_target", []):
+            t_data = tg_data.get("target", {})
             for r in tg_data.get("results", []):
                 results_list.append(JobResult(
                     technique_id=r.get("technique_id", ""),
@@ -426,10 +430,13 @@ async def get_report_html(job_id: str):
                     stderr=r.get("stderr", ""),
                     command_executed=r.get("command_executed", ""),
                     duration_ms=r.get("duration_ms", 0),
-                    target_id=r.get("target_id", ""),
-                    target_name=r.get("target_name", ""),
+                    target_id=r.get("target_id") or t_data.get("target_id", ""),
+                    target_name=r.get("target_name") or t_data.get("name", ""),
                     skipped=r.get("skipped", False),
                     skip_reason=r.get("skip_reason", ""),
+                    outcome=r.get("outcome", ""),
+                    cleanup_status=r.get("cleanup_status", ""),
+                    cleanup_output=r.get("cleanup_output", ""),
                 ))
         job = ExecutionJob(
             job_id=job_id,
@@ -510,7 +517,7 @@ async def ws_execute(websocket: WebSocket, job_id: str):
         except Exception:
             pass
 
-    executor = DeterministicExecutor(engine=engine, on_event=lambda e: asyncio.ensure_future(on_event(e)))
+    executor = DeterministicExecutor(engine=engine, on_event=on_event)
 
     task = asyncio.current_task()
     _job_tasks[job_id] = task
@@ -546,9 +553,9 @@ async def ws_execute(websocket: WebSocket, job_id: str):
         job.status = "cancelled"
         job.end_time = datetime.utcnow().isoformat()
         
-        # Clean up WinRM client cache
+        # Release only this job's WinRM sessions; other jobs keep theirs.
         from core.winrm_runner import clear_client_cache
-        clear_client_cache()
+        clear_client_cache(job_id)
         
         from core.tactic_map import get_tactic_for_technique
         
@@ -580,6 +587,7 @@ async def ws_execute(websocket: WebSocket, job_id: str):
                         target_name=target.name,
                         skipped=True,
                         skip_reason="Job cancelled",
+                        outcome="skipped",
                     )
                     job.results.append(result)
                     job.completed += 1
@@ -952,9 +960,6 @@ async def _run_agent_task(
         session.status = "cancelled"
         session.end_time = datetime.utcnow().isoformat()
         
-        from core.winrm_runner import clear_client_cache
-        clear_client_cache()
-        
         cancel_event = AgentEvent(type="error", data={"message": "Agent session cancelled by user"})
         _session_events[session_id].append(cancel_event)
         
@@ -1253,13 +1258,27 @@ def _build_html_report(job: ExecutionJob, report: Optional[AnalysisReport]) -> s
 
     # ── Execution results table ────────────────────────────────────────────────
     results_rows = ""
+    outcome_labels = {
+        "success": ("✓ OK", "ok"),
+        "partial": ("◐ PARTIAL", "ok"),
+        "failed": ("✗ FAIL", "fail"),
+        "blocked": ("🛡 BLOCKED", "fail"),
+        "error": ("⚠ ERROR", "skip"),
+        "timeout": ("⏱ TIMEOUT", "skip"),
+        "prereq_missing": ("⏭ PREREQ", "skip"),
+        "skipped": ("⏭ SKIP", "skip"),
+    }
     for r in job.results:
-        if r.skipped:
+        if r.outcome in outcome_labels:
+            icon, cls = outcome_labels[r.outcome]
+        elif r.skipped:
             icon, cls = "⏭ SKIP", "skip"
         elif r.success:
             icon, cls = "✓ OK", "ok"
         else:
             icon, cls = "✗ FAIL", "fail"
+        if r.cleanup_status == "failed":
+            icon += " · cleanup ✗"
 
         stdout_cell = ""
         if r.stdout and r.stdout.strip():

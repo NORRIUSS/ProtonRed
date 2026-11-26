@@ -47,6 +47,12 @@ class StartJobRequest(BaseModel):
     targets: list[TargetRequest] = []
     # Legacy single-target shim — older callers send `scope` instead of `targets`.
     scope: Optional[ScopeConfigRequest] = None
+    # Run each test's ART cleanup_command afterwards (strongly recommended).
+    run_cleanup: bool = True
+    # Check ART prerequisites before each test; unmet → outcome "prereq_missing".
+    check_prereqs: bool = True
+    # Run get_prereq_command for unmet prerequisites (often downloads tools).
+    get_prereqs: bool = False
 
 
 class AnalyzeRequest(BaseModel):

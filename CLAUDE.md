@@ -111,6 +111,16 @@ SCOPE_PROFILES = {
 2. **Elevation** — `elevation_required=True` + target is `standard_user` → skip
 3. **Domain** — `DOMAIN_REQUIRED_TECHNIQUES` + `target.domain_joined=False` → skip
 
+### Per-test lifecycle (executor `run()`)
+1. `_should_skip()` filters → outcome `skipped`
+2. Prereqs (`check_prereqs`, default on): each ART `dependencies[].prereq_command` runs on the target; unmet → outcome `prereq_missing`, test not run. `get_prereqs=true` runs `get_prereq_command` first (often downloads tooling, off by default).
+3. Test runs, `core/outcome.py:classify()` sets `outcome`: `success | partial | failed | blocked | error | timeout`. `success` bool == (`outcome == "success"`).
+4. Cleanup (`run_cleanup`, default on): `cleanup_command` runs on the same target, args substituted. Also runs when the job is cancelled mid-test. Result in `cleanup_status` (`ok | failed | none | disabled`).
+
+Job flags `run_cleanup`, `check_prereqs`, `get_prereqs` are fields on `POST /api/jobs`.
+WinRM clients are cached per job (`RemoteConnection.pool = job_id`); cancelling one job never drops another job's sessions.
+Tests: `python -m pytest tests` (POSIX-only fake atomics; skipped on Windows).
+
 ### DOMAIN_REQUIRED_TECHNIQUES
 8 techniques need AD — skip if target not domain-joined:
 `T1558.001, T1558.003, T1558.004, T1087.002, T1069.002, T1003.003, T1003.005, T1110.003`

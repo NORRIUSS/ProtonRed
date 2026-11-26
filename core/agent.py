@@ -105,6 +105,7 @@ class PentestAgent:
         self.on_event = on_event
         self._session: Optional[AgentSession] = None
         self._messages: list[Message] = []
+        self._test_args: dict[str, dict] = {}
 
     def _emit(self, event: AgentEvent):
         if self._session:
@@ -255,12 +256,15 @@ Begin the pentest. Start with system_info."""
             if test_key in self._session.executed_tests:
                 return {"skipped": True, "reason": "Already executed this test in this session"}
             self._session.executed_tests.add(test_key)
+            # Remember the args so cleanup undoes exactly what was run.
+            self._test_args[test_key] = test_args
 
             result = await self.engine.execute_atomic(tid, test_index, test_args, timeout=60)
             return {
                 "technique_id": result.technique_id,
                 "test_name": result.test_name,
                 "success": result.success,
+                "outcome": result.outcome,
                 "exit_code": result.exit_code,
                 "stdout": result.stdout[:2000],
                 "stderr": result.stderr[:500],
@@ -270,7 +274,9 @@ Begin the pentest. Start with system_info."""
         elif tool == "cleanup_atomic":
             tid = args.get("technique_id", "")
             test_index = int(args.get("test_index", 0))
-            result = await self.engine.cleanup_atomic(tid, test_index)
+            result = await self.engine.cleanup_atomic(
+                tid, test_index, self._test_args.get(f"{tid}:{test_index}", {})
+            )
             return result
 
         elif tool == "note":

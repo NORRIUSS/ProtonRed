@@ -23,9 +23,12 @@ class RemoteConnection:
     transport: str = "ntlm"   # ntlm | kerberos | credssp | negotiate | basic
     port: int = 5985
     ssl: bool = False
+    # Cache scope, normally the job_id. Jobs never share or evict each other's
+    # clients, so cancelling one job cannot tear down another job's session.
+    pool: str = ""
 
     def cache_key(self) -> tuple:
-        return (self.host, self.username, self.transport, self.port, self.ssl)
+        return (self.pool, self.host, self.username, self.transport, self.port, self.ssl)
 
 
 # Per-job WinRM client cache: cache_key → Client.
@@ -89,12 +92,35 @@ def _evict(conn: RemoteConnection):
         _client_cache.pop(conn.cache_key(), None)
 
 
-def clear_client_cache():
-    """Call after a job finishes to release WinRM sessions."""
+def _close_client(client) -> None:
+    close = getattr(client, "close", None)
+    if callable(close):
+        try:
+            close()
+        except Exception:
+            pass
+
+
+def clear_client_cache(pool: Optional[str] = None):
+    """Release WinRM sessions. With `pool`, only that job's sessions are
+    dropped; without it, every cached session is (shutdown only)."""
     with _cache_lock:
-        _client_cache.clear()
+        keys = [k for k in _client_cache if pool is None or k[0] == pool]
+        clients = [_client_cache.pop(k) for k in keys]
     with _locks_lock:
-        _client_locks.clear()
+        for k in [k for k in _client_locks if pool is None or k[0] == pool]:
+            _client_locks.pop(k, None)
+    for c in clients:
+        _close_client(c)
+
+
+def _prepare_cmd(command: str) -> str:
+    """WinRS runs a single command line, so a multi-line command_prompt atomic
+    would only execute its first line. Chain the lines with `&` (run each
+    regardless of the previous exit code), matching what a .bat file does."""
+    lines = [ln.strip() for ln in command.replace("\r\n", "\n").split("\n")]
+    lines = [ln for ln in lines if ln and ln.lower() != "@echo off"]
+    return " & ".join(lines)
 
 
 def _execute_with_client(client, command: str, executor_name: str) -> dict:
@@ -110,7 +136,7 @@ def _execute_with_client(client, command: str, executor_name: str) -> dict:
             "exit_code": 1 if had_errors else 0,
         }
     else:  # command_prompt, cmd, anything else → cmd shell
-        stdout, stderr, rc = client.execute_cmd(command)
+        stdout, stderr, rc = client.execute_cmd(_prepare_cmd(command))
         return {"stdout": stdout or "", "stderr": stderr or "", "exit_code": rc}
 
 
@@ -125,8 +151,24 @@ async def run_remote(conn: RemoteConnection, command: str, executor_name: str, t
     def _locked_run():
         with lock:
             return _run_remote_sync(conn, command, executor_name, timeout)
-            
-    return await asyncio.to_thread(_locked_run)
+
+    # pypsrp calls block with no overall deadline. Bound the wait so one hung
+    # command cannot stall the whole job.
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_locked_run), timeout=timeout + 15)
+    except asyncio.TimeoutError:
+        # The worker thread is still stuck inside pypsrp holding `lock` and the
+        # client. Drop both so the next test gets a fresh session and lock.
+        _evict(conn)
+        with _locks_lock:
+            if _client_locks.get(key) is lock:
+                _client_locks.pop(key, None)
+        return {
+            "stdout": "",
+            "stderr": f"Remote execution timed out after {timeout}s",
+            "exit_code": -1,
+            "timed_out": True,
+        }
 
 
 def _run_remote_sync(conn: RemoteConnection, command: str, executor_name: str, timeout: int) -> dict:
