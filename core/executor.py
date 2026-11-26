@@ -21,6 +21,11 @@ from core.atomic_engine import AtomicEngine, ExecutionResult
 from core.tactic_map import get_tactic_for_technique, DOMAIN_REQUIRED_TECHNIQUES
 from core.winrm_runner import RemoteConnection, clear_client_cache
 from core import outcome as oc
+from core.invoke_atomic import InvokeAtomicBackend
+
+ENGINE_NATIVE = "native"
+ENGINE_INVOKE_ATOMIC = "invoke-atomic"
+ENGINES = (ENGINE_NATIVE, ENGINE_INVOKE_ATOMIC)
 from config import settings
 
 
@@ -121,6 +126,8 @@ class ExecutionJob:
     # Run each test's cleanup_command after it, on the same target. ART tests
     # in persistence/defense-evasion leave real changes behind otherwise.
     run_cleanup: bool = True
+    # native = ProtonRed's own executor; invoke-atomic = Red Canary's module.
+    engine: str = "native"
     # Evaluate ART `dependencies` before running a test.
     check_prereqs: bool = True
     # Run `get_prereq_command` for unmet dependencies (usually downloads tools).
@@ -135,9 +142,11 @@ class ExecutorEvent:
 
 
 class DeterministicExecutor:
-    def __init__(self, engine: AtomicEngine, on_event: Optional[Callable[[ExecutorEvent], None]] = None):
+    def __init__(self, engine: AtomicEngine, on_event: Optional[Callable[[ExecutorEvent], None]] = None,
+                 invoke_backend: Optional[InvokeAtomicBackend] = None):
         self.engine = engine
         self.on_event = on_event
+        self._invoke = invoke_backend
 
     async def _emit(self, event: ExecutorEvent):
         """Deliver an event and wait for it, so consumers see events in order
@@ -209,6 +218,103 @@ class DeterministicExecutor:
             return True, "wmic.exe removed from Windows 11 — not available on this host"
 
         return False, ""
+
+    async def _finish(self, job: ExecutionJob, result: "JobResult") -> None:
+        job.results.append(result)
+        job.completed += 1
+        await self._emit(ExecutorEvent(type="test_done", data={
+            "technique_id": result.technique_id,
+            "test_name": result.test_name,
+            "target_id": result.target_id,
+            "target_name": result.target_name,
+            "success": result.success,
+            "outcome": result.outcome,
+            "exit_code": result.exit_code,
+            "duration_ms": result.duration_ms,
+            "cleanup_status": result.cleanup_status,
+            "progress": f"{job.completed}/{job.total}",
+            "stdout_preview": result.stdout[:300],
+        }))
+
+    async def _run_invoke_atomic(self, job: ExecutionJob, sel: TestSelection, target: "Target",
+                                 remote: Optional[RemoteConnection], test, test_name: str) -> None:
+        """Run one test through Invoke-AtomicRedTeam (prereqs, test, cleanup in one round-trip)."""
+        if self._invoke is None:
+            self._invoke = InvokeAtomicBackend(atomics_path=str(self.engine.atomics_path))
+        has_cleanup = bool((test.executor.cleanup_command or "").strip())
+        want_cleanup = job.run_cleanup and has_cleanup
+        timeout = settings.AGENT_TIMEOUT_SECONDS
+
+        t_start = asyncio.get_running_loop().time()
+        try:
+            r = await self._invoke.run(
+                technique_id=sel.technique_id,
+                test_guid=test.guid,
+                test_index=sel.test_index,
+                input_args=sel.arg_overrides,
+                timeout=timeout,
+                remote=remote,
+                check_prereqs=job.check_prereqs and bool(test.dependencies),
+                get_prereqs=job.get_prereqs,
+                run_test=True,
+                run_cleanup=want_cleanup,
+            )
+        except asyncio.CancelledError:
+            if want_cleanup:
+                try:
+                    await asyncio.wait_for(self._invoke.run(
+                        sel.technique_id, test.guid, sel.test_index, sel.arg_overrides, timeout, remote,
+                        check_prereqs=False, get_prereqs=False, run_test=False, run_cleanup=True,
+                    ), timeout=timeout + 120)
+                except BaseException:
+                    pass
+            raise
+        duration_ms = int((asyncio.get_running_loop().time() - t_start) * 1000)
+
+        if r.prereq_checked and not r.prereq_met:
+            detail = "; ".join(r.prereq_reasons) or "see Invoke-AtomicTest -CheckPrereqs output"
+            await self._record_not_run(job, sel, target, test_name, oc.PREREQ_MISSING,
+                                       f"Prerequisites not met: {detail}")
+            return
+
+        if r.test_ran:
+            outcome = oc.classify(r.exit_code, r.stdout, r.stderr, r.timed_out)
+            stdout, stderr = r.stdout, r.stderr
+        else:
+            # Harness failure, or Invoke-AtomicTest decided the test does not
+            # apply to the target (platform/executor) and silently skipped it.
+            outcome = oc.TIMEOUT if r.timed_out else oc.ERROR
+            stdout = r.console
+            stderr = r.error or "Invoke-AtomicTest did not execute the test (not applicable to this target?)"
+
+        if not job.run_cleanup:
+            cleanup_status = "disabled"
+        elif not has_cleanup:
+            cleanup_status = "none"
+        elif r.cleanup_ran:
+            # Invoke-AtomicTest does not expose the cleanup exit code.
+            cleanup_status = "ran"
+        else:
+            cleanup_status = "failed"
+
+        await self._finish(job, JobResult(
+            technique_id=sel.technique_id,
+            test_index=sel.test_index,
+            test_name=test_name,
+            test_guid=test.guid,
+            tactic=get_tactic_for_technique(sel.technique_id),
+            success=outcome == oc.SUCCESS,
+            exit_code=r.exit_code,
+            stdout=self._truncate_middle(stdout, 20000),
+            stderr=self._truncate_middle(stderr, 8000),
+            command_executed=r.command[:2000],
+            duration_ms=duration_ms,
+            target_id=target.target_id,
+            target_name=target.name,
+            outcome=outcome,
+            cleanup_status=cleanup_status,
+            cleanup_output=self._truncate_middle(r.cleanup_output, 2000),
+        ))
 
     async def _cleanup(self, sel: TestSelection, remote: Optional[RemoteConnection]) -> tuple[str, str]:
         try:
@@ -299,6 +405,10 @@ class DeterministicExecutor:
                     continue
 
                 technique_test = technique.atomic_tests[sel.test_index]
+                if job.engine == ENGINE_INVOKE_ATOMIC:
+                    await self._run_invoke_atomic(job, sel, target, remote, technique_test, test_name)
+                    continue
+
                 if job.check_prereqs and technique_test.dependencies:
                     met, detail = await self.engine.check_prereqs(
                         technique_test, sel.arg_overrides, remote,
@@ -366,24 +476,11 @@ class DeterministicExecutor:
                     cleanup_status=cleanup_status,
                     cleanup_output=cleanup_output,
                 )
-                job.results.append(result)
-                job.completed += 1
-
-                await self._emit(ExecutorEvent(type="test_done", data={
-                    "technique_id": sel.technique_id,
-                    "test_name": result.test_name,
-                    "target_id": target.target_id,
-                    "target_name": target.name,
-                    "success": result.success,
-                    "outcome": result.outcome,
-                    "exit_code": result.exit_code,
-                    "duration_ms": duration_ms,
-                    "cleanup_status": cleanup_status,
-                    "progress": f"{job.completed}/{job.total}",
-                    "stdout_preview": result.stdout[:300],
-                }))
+                await self._finish(job, result)
 
         clear_client_cache(job.job_id)
+        if self._invoke is not None:
+            self._invoke.forget(job.job_id)
         job.status = "done"
         job.end_time = datetime.utcnow().isoformat()
         await self._emit(ExecutorEvent(type="job_done", data={

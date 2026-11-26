@@ -499,7 +499,11 @@ API keys can be provided:
 ```json
 {
   "targets": [<Target>, ...],
-  "selections": [<TestSelection>, ...]
+  "selections": [<TestSelection>, ...],
+  "engine": "native",        // optional: "native" | "invoke-atomic" (default: DEFAULT_ENGINE)
+  "run_cleanup": true,       // run each test's ART cleanup_command afterwards
+  "check_prereqs": true,     // unmet ART dependencies -> outcome "prereq_missing", test not run
+  "get_prereqs": false       // run get_prereq_command first (often downloads tools)
 }
 ```
 
@@ -531,6 +535,33 @@ API keys can be provided:
   "error": null
 }
 ```
+
+### Result `outcome`
+
+Every result carries an `outcome`, decided before the AI sees it (`core/outcome.py`).
+`success` is `true` only for `outcome == "success"`.
+
+| outcome | Meaning |
+|---------|---------|
+| `success` | exit 0, no block detected |
+| `partial` | non-zero exit but output was produced (e.g. `net user /domain` on a DC) |
+| `failed` | non-zero exit, no output, no control identified |
+| `blocked` | AMSI / Defender / ACL / AppLocker-WDAC stopped it (stderr match) |
+| `error` | the harness could not run it (missing binary, WinRM failure) |
+| `timeout` | killed after the time budget |
+| `prereq_missing` | ART prerequisites not met, not executed |
+| `skipped` | filtered before execution (platform, privilege, domain) |
+
+Each result also has `cleanup_status`: `ok` / `failed` (native engine, from the cleanup exit code), `ran` (invoke-atomic engine: cleanup was executed, exit code not exposed by Invoke-AtomicTest), `none` (test has no cleanup), `disabled` (job opted out).
+
+### Execution Engines
+
+| engine | How tests run |
+|--------|---------------|
+| `native` | ProtonRed's own executor (`core/atomic_engine.py`): cmd/PowerShell locally, or `pypsrp` over WinRM. |
+| `invoke-atomic` | Red Canary's [Invoke-AtomicRedTeam](https://github.com/redcanaryco/invoke-atomicredteam), used **unmodified**. Per test, `ps/run_atomic.ps1` runs on the target and calls `Invoke-AtomicTest` for prereqs, the test and cleanup; `ps/ProtonRed-ExecutionLogger.psm1` (a `-LoggingModule`) captures stdout / stderr / exit code / timeout as JSON. |
+
+`invoke-atomic` setup: `python tools/fetch_vendor.py` (also run by `start.ps1`) downloads the pinned, hash-checked modules into `vendor/modules/`. Remote targets need no internet: on first use the modules and **only the selected technique folders** are copied over WinRM to `C:\ProgramData\ProtonRed` (`INVOKE_ATOMIC_REMOTE_ROOT`) and reused while unchanged. Local targets use `powershell.exe` (or `pwsh` via `PWSH_PATH` off Windows).
 
 ### Exit Code Semantics
 

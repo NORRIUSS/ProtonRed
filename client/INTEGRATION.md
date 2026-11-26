@@ -325,7 +325,11 @@ Create a job. Returns immediately with `job_id`. Execution happens over WebSocke
 ```json
 {
   "targets": [<Target>, ...],
-  "selections": [<TestSelection>, ...]
+  "selections": [<TestSelection>, ...],
+  "engine": "native",        // optional: "native" | "invoke-atomic" (default: DEFAULT_ENGINE)
+  "run_cleanup": true,       // run each test's ART cleanup_command afterwards
+  "check_prereqs": true,     // unmet ART dependencies -> outcome "prereq_missing", test not run
+  "get_prereqs": false       // run get_prereq_command first (often downloads tools)
 }
 ```
 

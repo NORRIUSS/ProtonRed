@@ -164,6 +164,18 @@ function Initialize-Atomics {
 }
 
 # ---------------------------------------------------------------------------
+# 3b. Invoke-AtomicRedTeam modules for the invoke-atomic engine (pinned, hashed)
+# ---------------------------------------------------------------------------
+function Initialize-Vendor {
+    Write-Step "Checking Invoke-AtomicRedTeam modules (vendor/modules)..."
+    & $PyExe (Join-Path $Root "tools\fetch_vendor.py")
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warn2 "Could not fetch vendor modules - the 'invoke-atomic' engine will be unavailable."
+        Write-Warn2 "The 'native' engine still works. Retry: python tools\fetch_vendor.py"
+    }
+}
+
+# ---------------------------------------------------------------------------
 # 4. Port check
 # ---------------------------------------------------------------------------
 function Test-Port {
@@ -193,6 +205,7 @@ try {
     Initialize-Python
     Initialize-Deps
     Initialize-Atomics
+    Initialize-Vendor
     Test-Port
 
     # Ensure firewall allows inbound on the chosen port.

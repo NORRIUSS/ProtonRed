@@ -227,3 +227,60 @@ def _run_remote_sync(conn: RemoteConnection, command: str, executor_name: str, t
 
         # Fatal / unknown — no retry
         return {"stdout": "", "stderr": f"WinRM execution error: {e}", "exit_code": -1}
+
+
+# ── Generic helpers used by the invoke-atomic engine (core/invoke_atomic.py) ──
+
+def _get_lock(key: tuple) -> threading.Lock:
+    with _locks_lock:
+        if key not in _client_locks:
+            _client_locks[key] = threading.Lock()
+        return _client_locks[key]
+
+
+def _drop_stuck(conn: RemoteConnection, lock: threading.Lock) -> None:
+    """A worker thread is still blocked inside pypsrp holding `lock` and the
+    client. Forget both so the next call opens a fresh session."""
+    _evict(conn)
+    with _locks_lock:
+        if _client_locks.get(conn.cache_key()) is lock:
+            _client_locks.pop(conn.cache_key(), None)
+
+
+async def _call_with_client(conn: RemoteConnection, fn, timeout: int):
+    """Run fn(client) in a worker thread under the per-connection lock with an
+    overall deadline. Raises RuntimeError on connect failure, TimeoutError on
+    deadline; on cancellation the stuck session is dropped before re-raising."""
+    lock = _get_lock(conn.cache_key())
+
+    def _run():
+        with lock:
+            client, err = _get_or_create_client(conn, min(timeout, 60))
+            if err:
+                raise RuntimeError(err)
+            try:
+                return fn(client)
+            except Exception:
+                _evict(conn)
+                raise
+
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(_run), timeout=timeout)
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        _drop_stuck(conn, lock)
+        raise
+
+
+async def run_remote_ps(conn: RemoteConnection, script: str, timeout: int) -> tuple[str, str]:
+    """Execute a PowerShell script in a remote runspace. Returns (output, errors)."""
+    def _fn(client):
+        output, streams, had_errors = client.execute_ps(script)
+        errors = "\n".join(str(e) for e in (streams.error or [])) if had_errors else ""
+        return output or "", errors
+
+    return await _call_with_client(conn, _fn, timeout)
+
+
+async def copy_to_remote(conn: RemoteConnection, src: str, dest: str, timeout: int) -> None:
+    """Copy a local file to `dest` on the target over WinRM (no SMB needed)."""
+    await _call_with_client(conn, lambda client: client.copy(src, dest), timeout)
