@@ -11,6 +11,13 @@ class Settings:
     ART_ATOMICS_PATH: str = os.getenv("ART_ATOMICS_PATH", str(BASE_DIR / "atomics"))
     RESULTS_DIR: str = os.getenv("RESULTS_DIR", str(BASE_DIR / "results"))
 
+    # invoke-atomic engine (Red Canary Invoke-AtomicRedTeam, see core/invoke_atomic.py)
+    VENDOR_DIR: str = os.getenv("VENDOR_DIR", str(BASE_DIR / "vendor"))
+    PWSH_PATH: str = os.getenv("PWSH_PATH", "")   # non-Windows hosts only; Windows uses powershell.exe
+    INVOKE_ATOMIC_REMOTE_ROOT: str = os.getenv("INVOKE_ATOMIC_REMOTE_ROOT", r"C:\ProgramData\ProtonRed")
+    # Default engine for jobs that do not specify one: native | invoke-atomic
+    DEFAULT_ENGINE: str = os.getenv("DEFAULT_ENGINE", "native")
+
     # Nmap port scanning
     NMAP_PATH: str = os.getenv("NMAP_PATH", "")
     SCAN_TIMEOUT_SECONDS: int = int(os.getenv("SCAN_TIMEOUT_SECONDS", "600"))

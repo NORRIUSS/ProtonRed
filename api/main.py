@@ -23,7 +23,8 @@ from api.models import (
 from core.agent import PentestAgent, AgentSession, AgentEvent
 from config import settings
 from core.atomic_engine import AtomicEngine
-from core.executor import DeterministicExecutor, ExecutionJob, Target, TestSelection, ExecutorEvent, serialize_job_results, JobResult
+from core.invoke_atomic import vendor_status
+from core.executor import ENGINES, ENGINE_INVOKE_ATOMIC, DeterministicExecutor, ExecutionJob, Target, TestSelection, ExecutorEvent, serialize_job_results, JobResult
 from core.analyzer import analyze_results, stream_analysis, parse_analysis_response, AnalysisReport, AnalysisFinding
 from core.nmap_scanner import run_scan, load_scan, SCAN_PROFILES, DEFAULT_PROFILE
 from core.vuln_analyzer import stream_scan_analysis, parse_vuln_response
@@ -270,6 +271,16 @@ async def create_job(req: StartJobRequest):
     if not targets:
         raise HTTPException(400, "No targets provided (supply `targets` or legacy `scope`)")
 
+    engine_name = (req.engine or settings.DEFAULT_ENGINE).lower()
+    if engine_name not in ENGINES:
+        raise HTTPException(400, f"Unknown engine '{req.engine}'. Options: {list(ENGINES)}")
+    if engine_name == ENGINE_INVOKE_ATOMIC:
+        status = vendor_status()
+        if not status["available"]:
+            raise HTTPException(400, f"invoke-atomic engine unavailable: missing {status['missing_modules']} — {status['hint']}")
+        if any(not t.is_remote for t in targets) and not status["local_powershell"]:
+            raise HTTPException(400, "invoke-atomic engine needs PowerShell on this host for local targets")
+
     selections = [
         TestSelection(technique_id=s.technique_id, test_index=s.test_index, arg_overrides=s.arg_overrides)
         for s in req.selections
@@ -279,12 +290,13 @@ async def create_job(req: StartJobRequest):
         targets=targets,
         selections=selections,
         total=len(targets) * len(selections),
+        engine=engine_name,
         run_cleanup=req.run_cleanup,
         check_prereqs=req.check_prereqs,
         get_prereqs=req.get_prereqs,
     )
     _jobs[job.job_id] = job
-    return {"job_id": job.job_id, "total": job.total, "target_count": len(targets)}
+    return {"job_id": job.job_id, "total": job.total, "target_count": len(targets), "engine": engine_name}
 
 
 @app.post("/api/jobs/{job_id}/cancel")
@@ -1224,6 +1236,11 @@ async def health():
         "analyses": len(_analysis),
         "saved_results": result_files,
         "results_dir": str(_results_dir),
+        "engines": {
+            "default": settings.DEFAULT_ENGINE,
+            "native": {"available": True},
+            "invoke-atomic": vendor_status(),
+        },
     }
 
 

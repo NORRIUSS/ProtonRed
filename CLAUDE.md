@@ -38,7 +38,17 @@ proton-red/
 │   ├── analyzer.py          # AIAnalyzer — single-call streaming + parse_analysis_response()
 │   ├── tactic_map.py        # TACTIC_GROUPS, SCOPE_PROFILES, DOMAIN_REQUIRED_TECHNIQUES
 │   ├── winrm_runner.py      # WinRM remote execution via pypsrp; NTLM auth; connection cache
-│   └── reporter.py          # HTML/JSON report generation (if present)
+│   ├── reporter.py          # HTML/JSON report generation (if present)
+│   ├── outcome.py           # classify(): success|partial|failed|blocked|error|timeout|...
+│   └── invoke_atomic.py     # invoke-atomic engine: Red Canary Invoke-AtomicRedTeam over WinRM/local
+├── ps/
+│   ├── run_atomic.ps1       # runs ON the target: CheckPrereqs → test → Cleanup via Invoke-AtomicTest
+│   └── ProtonRed-ExecutionLogger.psm1  # -LoggingModule that writes per-test JSON
+├── tools/
+│   ├── fetch_vendor.py      # pinned + sha256-checked Invoke-AtomicRedTeam / powershell-yaml → vendor/
+│   └── compare_engines.py   # run the same tests on both engines against one target, diff outcomes
+├── vendor/modules/          # (gitignored) fetched PowerShell modules
+├── tests/                   # pytest: python -m pytest
 ├── providers/
 │   ├── __init__.py          # PROVIDER_CATALOG (19+ models), get_provider()
 │   ├── base.py              # AIProvider ABC, ProviderConfig dataclass
@@ -117,7 +127,16 @@ SCOPE_PROFILES = {
 3. Test runs, `core/outcome.py:classify()` sets `outcome`: `success | partial | failed | blocked | error | timeout`. `success` bool == (`outcome == "success"`).
 4. Cleanup (`run_cleanup`, default on): `cleanup_command` runs on the same target, args substituted. Also runs when the job is cancelled mid-test. Result in `cleanup_status` (`ok | failed | none | disabled`).
 
-Job flags `run_cleanup`, `check_prereqs`, `get_prereqs` are fields on `POST /api/jobs`.
+Job flags `engine`, `run_cleanup`, `check_prereqs`, `get_prereqs` are fields on `POST /api/jobs`.
+
+### Engines — `native` vs `invoke-atomic`
+- `native`: the lifecycle above, ProtonRed's own executor.
+- `invoke-atomic` (`core/invoke_atomic.py`): Red Canary Invoke-AtomicRedTeam, **used as an unmodified dependency, never forked/patched**. Pinned in `tools/fetch_vendor.py` (v2.3.0 + powershell-yaml 0.4.12, sha256-checked) → `vendor/modules/` (gitignored).
+  - One round-trip per test: `ps/run_atomic.ps1` on the target calls `Invoke-AtomicTest` with `-CheckPrereqs`, then the test with `-LoggingModule ProtonRed-ExecutionLogger`, then `-Cleanup`. Last output line `PROTONRED_RESULT:<base64 json>`.
+  - Logger (`ps/ProtonRed-ExecutionLogger.psm1`) only fires for test execution (upstream behaviour): prereq status is parsed from `Prerequisites not met` text, cleanup exit code is unavailable → `cleanup_status = "ran"`.
+  - Remote: modules + only the selected technique folder are zipped, copied over WinRM (`Client.copy`) to `INVOKE_ATOMIC_REMOTE_ROOT`, expanded, and marked with a content hash so later jobs skip the upload.
+  - Tests: `tests/test_invoke_atomic.py` drives the real module via pwsh with `sh` atomics (needs vendor + pwsh; set `PWSH_PATH`).
+- `DEFAULT_ENGINE` env var picks the default (currently `native` until invoke-atomic is validated on the lab DC).
 WinRM clients are cached per job (`RemoteConnection.pool = job_id`); cancelling one job never drops another job's sessions.
 Tests: `python -m pytest tests` (POSIX-only fake atomics; skipped on Windows).
 
@@ -181,7 +200,11 @@ API keys in browser `localStorage` (temp UI). In production, parent platform pas
   ],
   "selections": [
     {"technique_id": "T1082", "test_index": 0, "arg_overrides": {}}
-  ]
+  ],
+  "engine": "native",
+  "run_cleanup": true,
+  "check_prereqs": true,
+  "get_prereqs": false
 }
 ```
 

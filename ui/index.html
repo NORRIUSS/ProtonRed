@@ -493,6 +493,13 @@ textarea { resize: vertical; min-height: 60px; }
       </div>
       <div class="divider"></div>
       <div class="card-title">Run</div>
+      <label style="font-size:10px;color:var(--dim)">Engine</label>
+      <select id="engine-select" style="width:100%;margin:2px 0 6px" title="native = ProtonRed executor · invoke-atomic = Red Canary Invoke-AtomicRedTeam">
+        <option value="native">native (ProtonRed)</option>
+        <option value="invoke-atomic">invoke-atomic (Red Canary)</option>
+      </select>
+      <label style="font-size:10px;color:var(--dim);display:block;margin-bottom:2px"><input type="checkbox" id="opt-cleanup" checked> run cleanup after each test</label>
+      <label style="font-size:10px;color:var(--dim);display:block;margin-bottom:6px"><input type="checkbox" id="opt-prereqs" checked> check prerequisites</label>
       <button class="btn btn-primary btn-full" id="run-btn" onclick="runExecution()">▶ Run Tests</button>
       <button class="btn btn-full btn-sm" id="reset-btn" onclick="resetExecution()" style="display:none;margin-top:6px;background:rgba(255,71,87,.15);border:1px solid var(--red);color:var(--red)">⟳ Reset / Cancel</button>
       <div style="margin-top:8px">
@@ -1204,8 +1211,18 @@ async function runExecution() {
     const r = await fetch(`${API}/api/jobs`, {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({targets: payloadTargets, selections: sels}),
-    }).then(r=>r.json());
+      body: JSON.stringify({
+        targets: payloadTargets,
+        selections: sels,
+        engine: document.getElementById('engine-select').value,
+        run_cleanup: document.getElementById('opt-cleanup').checked,
+        check_prereqs: document.getElementById('opt-prereqs').checked,
+      }),
+    }).then(async resp => {
+      const body = await resp.json();
+      if (!resp.ok) throw new Error(body.detail || resp.statusText);
+      return body;
+    });
     jobId = r.job_id;
     currentJobId = jobId;
     saveSession();
